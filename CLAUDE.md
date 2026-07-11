@@ -91,30 +91,30 @@ example used in tests and docs below — just note it no longer exists until som
   sequential ordering *and* gives independent agents parallel execution for free — there's a
   single code path for single-agent, multi-step pipeline, and parallel-branch tasks.
 
-## Phased execution (added 2026-07-11)
-Every text/structured/feedback agent step now runs as `TEXT_AGENT_PHASES` (currently 2)
-sequential Gemini calls instead of one, via `runAgentPromptPhase()` in `geminiClient.js`, called
-in a loop from `runChain()` in `orchestrator.js`. This is what powers `step.phase` in the API
-contract above — real per-task phase labels (e.g. "Gathering" then "Summarizing") rather than a
-static "Working" the whole time. Mechanics:
+## Execution modes and phases (updated 2026-07-11)
+Every task has `executionMode: "fast" | "thorough"` (default `"fast"`). Fast makes one Gemini
+call per text/structured/feedback agent, uses an 8,192-token ceiling, retries one transient 503,
+and only enables web tools when the input or agent definition signals that they are needed.
+Thorough preserves the original two sequential calls, 16,384-token ceiling, two transient
+retries, and always-on web tools. Both modes use `runAgentPromptPhase()` in `geminiClient.js`,
+called from `runChain()` in `orchestrator.js`. Mechanics:
 - Each call asks Gemini for structured JSON output (`responseMimeType: 'application/json'`,
   a `{ phase, content }` schema) — the model picks its own short gerund label for what that
   phase is doing, specific to the task at hand, not a hardcoded list.
-- Phase 1's prompt asks for "the natural first part of the work" (research/gathering/drafting);
-  the final phase's prompt hands back phase 1's `content` as context and asks for the finished
-  answer. Only the *last* phase's `content` becomes the step's actual `output` — earlier phases'
-  content is intermediate work product, never shown to the user directly.
+- Fast asks for the finished answer in its one call. Thorough phase 1 asks for "the natural first
+  part of the work" (research/gathering/drafting); its final phase receives phase 1's `content`
+  and produces the finished answer. Only the last phase becomes the step's actual `output`.
 - `step.phase` is written back to the store (`saveTask`) after every phase completes, so
   `GET /api/tasks` reflects the current phase mid-execution, not just at the end.
 - Image agents (`outputType: 'image'`) are unaffected — Imagen has no equivalent notion of an
   intermediate phase, so they still run as a single `generateImage()` call.
-- Cost/latency tradeoff: this roughly doubles Gemini calls (and therefore latency and token
-  spend) for every non-image agent step. Accepted as worthwhile for the demo; revisit
-  `TEXT_AGENT_PHASES` if either becomes a problem.
+- Cost/latency tradeoff is now user-controlled in the task dialog instead of imposed globally.
 
-**Web access (added 2026-07-11):** every `runAgentPromptPhase()` call passes
-`tools: [{ urlContext: {} }, { googleSearch: {} }]` — real Gemini API tools, not agent-to-agent
-function calling (that's a separate `tools` config, only used by `askOrchestrator()` for routing).
+**Web access (updated 2026-07-11):** Thorough always passes
+`tools: [{ urlContext: {} }, { googleSearch: {} }]`; Fast passes them only when
+`shouldUseWebAccess()` detects a URL, research/current-information language, or a research role.
+These are real Gemini API tools, not agent-to-agent function calling (that's a separate `tools`
+config, only used by `askOrchestrator()` for routing).
 `urlContext` lets the model fetch and read specific URLs mentioned in its input (e.g. "summarize
 the reviews at this link"); `googleSearch` grounds answers in live search results instead of only
 training-data knowledge. Confirmed compatible with `responseSchema`/JSON mode by testing directly
@@ -182,8 +182,8 @@ get this — Imagen's `generateImages` call has no `tools` support.
   auto-merge would degrade it for the whole team, not just the person who gave the feedback.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
-- `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
-  createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
+- `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, executionMode, status,
+  steps[], createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
   one of `pending|working|done|error|cancelled`. `phase` (**added 2026-07-11**, string, only
   present once a text/structured/feedback agent's first phase completes) is a short task-specific
   gerund label — "Gathering", "Summarizing", etc — self-reported by the model each phase; see
@@ -194,10 +194,11 @@ get this — Imagen's `generateImages` call has no `tools` support.
   `steps` and `status: "pending"`. Execution (routing + running each agent) continues
   asynchronously; the frontend polls `GET /api/tasks` to watch `steps` fill in and `status`
   progress to `working` → `done`/`error`. Two ways to call it, both still supported:
-  - `Content-Type: application/json`, body `{ input: "...", agentId?: "writer" }` — no
+  - `Content-Type: application/json`, body `{ input: "...", agentId?: "writer",
+    executionMode?: "fast" | "thorough" }` — no
     attachment. When `agentId` is supplied, the task targets that agent and automatically
     includes its declared upstream dependencies; without it, Gemini chooses the chain.
-  - `Content-Type: multipart/form-data`, fields `input` (text) and `file` (the upload) — for
+  - `Content-Type: multipart/form-data`, fields `input`, optional `executionMode`, and `file` — for
     tasks with an attachment. `input` is still required and validated the same way either way.
     Max upload size 20MB, one file per task. The response's `file` field reflects what was
     attached (or `null` for the JSON path).

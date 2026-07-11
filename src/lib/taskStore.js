@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { redis, isPersistent, parseStored } from './persistence.js';
+import { DEFAULT_EXECUTION_MODE } from './executionModes.js';
 
 // In-memory fallback used when no KV/Upstash database is linked (e.g. local
 // dev). When isPersistent is true this array is unused.
@@ -11,7 +12,7 @@ const INDEX_KEY = 'bullpen:task:index';
 // file: { name, mimeType } | null — metadata only, for display. The raw upload
 // bytes are passed directly into runChain() and never stored here (or anywhere
 // persistent) — they live only for the duration of that task's execution.
-export async function createTask(input, file = null, assignedAgentId = null) {
+export async function createTask(input, file = null, assignedAgentId = null, executionMode = DEFAULT_EXECUTION_MODE) {
   const task = {
     id: randomUUID(),
     input,
@@ -20,6 +21,7 @@ export async function createTask(input, file = null, assignedAgentId = null) {
     createdAt: new Date().toISOString(),
     file,
     assignedAgentId,
+    executionMode,
     cancelRequested: false,
   };
   if (isPersistent) {

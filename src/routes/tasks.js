@@ -3,6 +3,7 @@ import multer from 'multer';
 import { createTask, getAllTasks, getTaskById, saveTask, removeTask } from '../lib/taskStore.js';
 import { runChain } from '../orchestrator.js';
 import { getAgentById, saveAgent } from '../agents/agentStore.js';
+import { DEFAULT_EXECUTION_MODE, EXECUTION_MODES, isExecutionMode } from '../lib/executionModes.js';
 
 const router = Router();
 
@@ -76,8 +77,13 @@ router.post('/', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: `agentId "${assignedAgentId}" does not match an existing agent` });
     }
 
+    const executionMode = req.body?.executionMode || DEFAULT_EXECUTION_MODE;
+    if (!isExecutionMode(executionMode)) {
+      return res.status(400).json({ error: `executionMode must be one of: ${EXECUTION_MODES.join(', ')}` });
+    }
+
     const fileMeta = req.file ? { name: req.file.originalname, mimeType: req.file.mimetype } : null;
-    const task = await createTask(input.trim(), fileMeta, assignedAgentId);
+    const task = await createTask(input.trim(), fileMeta, assignedAgentId, executionMode);
     res.status(201).json(task);
 
     // Execution continues async; frontend polls GET /api/tasks for progress.

@@ -88,18 +88,19 @@ export const api = {
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   deleteTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  createTask: ({ input, file, agentId = null }) => {
+  createTask: ({ input, file, agentId = null, executionMode = "fast" }) => {
     if (file) {
       const body = new FormData();
       body.append("input", input);
       body.append("file", file);
+      body.append("executionMode", executionMode);
       if (agentId) body.append("agentId", agentId);
       return request("/api/tasks", { method: "POST", body });
     }
     return request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input, ...(agentId ? { agentId } : {}) }),
+      body: JSON.stringify({ input, executionMode, ...(agentId ? { agentId } : {}) }),
     });
   },
 };

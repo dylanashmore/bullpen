@@ -2,14 +2,15 @@ import { getAllAgents, getAgentById, saveAgent } from './agents/agentStore.js';
 import { getTaskById, saveTask } from './lib/taskStore.js';
 import { askOrchestrator, runAgentPromptPhase } from './lib/geminiClient.js';
 import { generateImage } from './lib/imagenClient.js';
+import { DEFAULT_EXECUTION_MODE } from './lib/executionModes.js';
 
-// Text/structured/feedback agents run in two real, sequential Gemini calls
-// rather than one, so the frontend can show what an agent is actually doing
-// (step.phase, e.g. "Gathering" then "Summarizing") instead of a static
-// "Working" the whole time. Each phase's label is picked by the model itself
-// for that specific task, not hardcoded. Image agents skip this — Imagen has
-// no equivalent notion of an intermediate phase.
-const TEXT_AGENT_PHASES = 2;
+// Fast mode makes one specialist call; Thorough retains the original two-pass
+// gather/refine flow. Image agents always make one Imagen request.
+const TEXT_AGENT_PHASES = { fast: 1, thorough: 2 };
+
+export function getTextAgentPhaseCount(executionMode) {
+  return TEXT_AGENT_PHASES[executionMode] || TEXT_AGENT_PHASES.fast;
+}
 
 // Under a persistent store, `task` here and the object POST /api/tasks/:id/cancel
 // fetches are two separate deserialized copies of the same record — so
@@ -72,6 +73,7 @@ export async function resolveAgentChain(agentIds) {
 // existed. The buffer lives only for this call and is never persisted.
 export async function runChain(task, fileBuffer, assignedAgentId = null) {
   task.status = 'working';
+  task.executionMode = task.executionMode || DEFAULT_EXECUTION_MODE;
   await saveTask(task);
 
   let chainAgents;
@@ -142,6 +144,7 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
           return;
         }
         step.status = 'working';
+        step.phase = task.executionMode === 'fast' ? 'Generating' : undefined;
         agent.status = 'working';
         await saveTask(task);
         await saveAgent(agent);
@@ -155,19 +158,21 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
           if (agent.outputType === 'image') {
             output = await generateImage(stepInput);
           } else {
+            const totalPhases = getTextAgentPhaseCount(task.executionMode);
             let previousContent;
-            for (let phaseNumber = 1; phaseNumber <= TEXT_AGENT_PHASES; phaseNumber += 1) {
+            for (let phaseNumber = 1; phaseNumber <= totalPhases; phaseNumber += 1) {
               const { phase, content } = await runAgentPromptPhase(agent, {
                 input: stepInput,
                 phaseNumber,
-                totalPhases: TEXT_AGENT_PHASES,
+                totalPhases,
                 previousContent,
                 file: phaseNumber === 1 ? stepFile : undefined,
+                executionMode: task.executionMode,
               });
               step.phase = phase;
               await saveTask(task);
               previousContent = content;
-              if (phaseNumber < TEXT_AGENT_PHASES && (await isCancelled(task.id))) {
+              if (phaseNumber < totalPhases && (await isCancelled(task.id))) {
                 step.status = 'cancelled';
                 return;
               }

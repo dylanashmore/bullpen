@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { createTask, getAllTasks, getTaskById, saveTask } from '../lib/taskStore.js';
+import { createTask, getAllTasks, getTaskById, saveTask, removeTask } from '../lib/taskStore.js';
 import { runChain } from '../orchestrator.js';
 import { getAgentById, saveAgent } from '../agents/agentStore.js';
 
@@ -44,6 +44,23 @@ router.post('/:id/cancel', async (req, res) => {
     res.json(task);
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel task', detail: err.message });
+  }
+});
+
+// Deletes a task's record outright (unlike /cancel, which just stops it and
+// keeps it in the feed). Allowed at any status — if a chain is still running
+// in the background for a task deleted mid-execution, its next saveTask()
+// call will re-write the record (same class of caveat as the fire-and-forget
+// runChain risk noted in api/[...path].js); harmless in practice since the
+// frontend won't be polling for an id it no longer has locally.
+router.delete('/:id', async (req, res) => {
+  try {
+    const task = await getTaskById(req.params.id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    await removeTask(req.params.id);
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete task', detail: err.message });
   }
 });
 

@@ -874,12 +874,18 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
   );
 }
 
-function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
+function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete }) {
   const status = task.status || "pending";
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
     <article className={`task-card ${status}`}>
-      <div className="task-card-head"><div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div><span className={`task-status ${status}`}>{status}</span></div>
+      <div className="task-card-head">
+        <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
+        <div className="task-card-head-actions">
+          <span className={`task-status ${status}`}>{status}</span>
+          {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task">🗑</button>}
+        </div>
+      </div>
       {task.fileWarning && <div className="task-warning">{task.fileWarning}</div>}
       {task.error && <div className="task-error">{task.error}</div>}
       {task.steps?.length > 0 && (
@@ -901,25 +907,30 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
   );
 }
 
-// Compact, clickable row for the task index — each task now lives on its own
-// page (see TaskDetailView); this list is just a way to get there, so it
-// stays lightweight rather than rendering every step/output inline.
-function TaskListRow({ task, agents, onOpen }) {
+// Compact row for the task index — each task now lives on its own page (see
+// TaskDetailView); this list is just a way to get there, so it stays
+// lightweight rather than rendering every step/output inline. Not a single
+// <button> (can't nest the delete control inside one), so the open action and
+// the delete action are separate sibling buttons inside a plain row.
+function TaskListRow({ task, agents, onOpen, onDelete }) {
   const status = task.status || "pending";
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
-    <button type="button" className={`task-row ${status}`} onClick={() => onOpen(task.id)}>
-      <span className={`history-status ${status}`} aria-hidden="true" />
-      <span className="task-row-copy">
-        <strong>{task.input}</strong>
-        <small>{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</small>
-      </span>
-      <span className={`task-status ${status}`}>{status}</span>
-    </button>
+    <div className={`task-row ${status}`}>
+      <button type="button" className="task-row-main" onClick={() => onOpen(task.id)}>
+        <span className={`history-status ${status}`} aria-hidden="true" />
+        <span className="task-row-copy">
+          <strong>{task.input}</strong>
+          <small>{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</small>
+        </span>
+        <span className={`task-status ${status}`}>{status}</span>
+      </button>
+      <button className="icon-button task-row-delete" type="button" onClick={() => onDelete(task)} aria-label="Delete task">🗑</button>
+    </div>
   );
 }
 
-function TasksView({ tasks, agents, connection, onCreate, onOpen }) {
+function TasksView({ tasks, agents, connection, onCreate, onOpen, onDelete }) {
   return (
     <>
       <div className="page-heading">
@@ -928,7 +939,7 @@ function TasksView({ tasks, agents, connection, onCreate, onOpen }) {
       </div>
       {!connection.geminiConfigured && <div className="api-key-banner"><strong>Gemini API key needed</strong><span>Add <code>GEMINI_API_KEY</code> to the root <code>.env</code> file and restart the backend to run tasks.</span></div>}
       <div className="task-list">
-        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskListRow task={task} agents={agents} onOpen={onOpen} key={task.id} />)}
+        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskListRow task={task} agents={agents} onOpen={onOpen} onDelete={onDelete} key={task.id} />)}
       </div>
     </>
   );
@@ -937,7 +948,7 @@ function TasksView({ tasks, agents, connection, onCreate, onOpen }) {
 // Each task's own page (linked from the Tasks index and the sidebar's recent
 // history) — renders the full TaskCard (steps, outputs, feedback) rather than
 // the compact row used in the list.
-function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext }) {
+function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext, onDelete }) {
   return (
     <>
       <div className="page-heading">
@@ -947,7 +958,7 @@ function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContex
         </div>
       </div>
       {task
-        ? <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} />
+        ? <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} onDelete={onDelete} />
         : <div className="list-empty"><strong>Task not found</strong>It may have been removed, or hasn't loaded yet.</div>}
     </>
   );
@@ -1232,6 +1243,18 @@ export default function App() {
     }
   }
 
+  async function deleteTask(task) {
+    if (!window.confirm("Delete this task? This can't be undone.")) return;
+    try {
+      await api.deleteTask(task.id);
+      setTasks((current) => current.filter((item) => item.id !== task.id));
+      if (taskDetailId === task.id) navigate("tasks");
+      notify("Task deleted.");
+    } catch (error) {
+      notify(error.message);
+    }
+  }
+
   function completeIntro() {
     try { sessionStorage.setItem(INTRO_KEY, "true"); } catch { /* Storage is optional. */ }
     setShowIntro(false);
@@ -1302,8 +1325,8 @@ export default function App() {
             {view === "agents"
               ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : view === "task-detail"
-                ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />
-                : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} />}
+                ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onDelete={deleteTask} />
+                : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} onDelete={deleteTask} />}
           </section>
         </main>
         <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); }} onCreate={createTask} />

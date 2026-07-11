@@ -58,3 +58,15 @@ export async function getTaskById(id) {
   }
   return memoryTasks.find((t) => t.id === id);
 }
+
+export async function removeTask(id) {
+  if (isPersistent) {
+    await redis.del(taskKey(id));
+    await redis.lrem(INDEX_KEY, 0, id);
+    return true;
+  }
+  const index = memoryTasks.findIndex((t) => t.id === id);
+  if (index === -1) return false;
+  memoryTasks.splice(index, 1);
+  return true;
+}

@@ -204,6 +204,13 @@ get this — Imagen's `generateImages` call has no `tools` support.
 - `POST /api/tasks/:id/cancel` → cooperatively cancels a pending/working task, marks unfinished
   steps `cancelled`, and returns involved agents to `idle`. An in-flight provider request cannot
   be forcibly terminated, but its eventual result is discarded and cannot revive the task.
+- `DELETE /api/tasks/:id` (**added 2026-07-11**) → removes a task's record outright (unlike
+  `/cancel`, which stops it but keeps it in the feed) and returns 204. 404 if the id doesn't
+  match a task. Allowed at any status, including `pending`/`working` — if a chain is still
+  running in the background for a task deleted mid-execution, its next `saveTask()` call will
+  re-write the record (same class of risk as the fire-and-forget `runChain()` caveat noted
+  below), which is harmless in practice since the frontend has already dropped that id locally
+  and isn't polling for it.
 - `POST /api/optimize` (**added 2026-07-11**) → body `{ text, kind? }`, `kind` is
   `"agent_directive" | "task_input"` (defaults to a task-prompt rewrite if omitted). Rewrites
   `text` via Gemini for clarity/effectiveness and returns `{ optimized }`. Powers the "Optimize
@@ -221,8 +228,11 @@ src/
                          empty on every boot.
   lib/
     models.js          — supported per-agent Gemini model ids and default model
-    geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
-                         the Gemini Files API), askOrchestrator() (routing via function calling),
+    geminiClient.js    — runAgentPromptPhase() (one phase of a specialist agent's multi-phase
+                         execution, optionally attaches a file via the Gemini Files API, real
+                         web/search tools, JSON-schema output), optimizeText() (the "Optimize
+                         with Gemini" rewrite), generateContentWithRetry() (retries transient
+                         Gemini 503s), askOrchestrator() (routing via function calling),
                          suggestContextFromFeedback() (drafts a context update from step
                          feedback, or null if nothing durable), draftTeamForBusiness() (drafts a
                          starting roster for the mandatory onboarding flow, structured JSON
@@ -231,8 +241,8 @@ src/
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
                          or null if neither is set; agentStore/taskStore both branch on this
     taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
-                         after mutating a fetched task), Redis-backed via persistence.js with an
-                         in-memory fallback
+                         after mutating a fetched task, removeTask — deletes a task's record
+                         outright), Redis-backed via persistence.js with an in-memory fallback
   orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents)
@@ -242,7 +252,8 @@ src/
                          POST /draft-team drafts a starting roster from a business
                          description/goal/term, also without persisting anything
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
-                         an optional multipart file upload alongside the JSON path
+                         an optional multipart file upload alongside the JSON path;
+                         POST /:id/cancel and DELETE /:id round out the task lifecycle
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
@@ -251,8 +262,9 @@ api/
                          /api/health, /api/agents, /api/tasks, and /api/optimize
   agents/               — explicit Vercel entrypoints for /api/agents/:id,
                          /api/agents/:id/feedback, and /api/agents/draft-team
-  tasks/                — explicit Vercel entrypoint for /api/tasks/:id/cancel. These nested
-                         files are required because Vercel's Vite-generated route manifest
+  tasks/                — explicit Vercel entrypoints for /api/tasks/:id (DELETE) and
+                         /api/tasks/:id/cancel (POST). These nested files are required because
+                         Vercel's Vite-generated route manifest
                          treats the top-level [...path] function as a single path segment.
                          Every entrypoint re-exports the same Express app from src/app.js.
                          Agent/Task state now persists via Redis (see Storage above)
@@ -382,6 +394,19 @@ just switching to the "tasks" tab). `TaskDetailView` has a "← All tasks" back 
 task (removed, or not loaded yet) it shows a "Task not found" empty state instead of crashing.
 The sidebar's "Tasks" nav item still highlights as active while on a task-detail page (`Sidebar`
 receives `currentView="tasks"` for both the `"tasks"` and `"task-detail"` view states).
+
+**Task deletion (current, added 2026-07-11):** a 🗑 icon-button deletes a task from both places
+it can be viewed — the trailing icon-button on each `TaskListRow`, and one in `TaskCard`'s head
+(`task-card-head-actions`, only rendered when an `onDelete` prop is passed) on the task-detail
+page. Both call the same `deleteTask(task)` handler in `App`: `window.confirm`, then `DELETE
+/api/tasks/:id`, then drop the id from local `tasks` state. `TaskListRow` is a `<div>` again
+rather than a single `<button>` for this — the open-task action lives in a `.task-row-main`
+button and the delete action is a sibling icon-button, since a `<button>` can't nest another
+interactive element. Because the sidebar's "Task history" list and the "Tasks" count badge are
+both derived from the same shared `tasks` state, a deleted task disappears from the sidebar for
+free, no separate wiring needed. If you delete the task you're currently viewing on its detail
+page, `deleteTask` redirects back to `/app/tasks` (comparing the deleted id against `taskDetailId`)
+instead of leaving you on a "Task not found" page.
 
 **Optimize button on step feedback (current, added 2026-07-11):** `StepFeedback`'s textarea (the
 "Leave feedback for {agent}" form on a completed step, on the task-detail page) now has the same

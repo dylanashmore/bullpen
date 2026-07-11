@@ -87,6 +87,7 @@ export const api = {
   }),
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  deleteTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createTask: ({ input, file, agentId = null }) => {
     if (file) {
       const body = new FormData();

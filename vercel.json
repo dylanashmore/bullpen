@@ -14,6 +14,7 @@
     { "source": "/signup", "destination": "/index.html" },
     { "source": "/app", "destination": "/index.html" },
     { "source": "/app/agents", "destination": "/index.html" },
-    { "source": "/app/tasks", "destination": "/index.html" }
+    { "source": "/app/tasks", "destination": "/index.html" },
+    { "source": "/app/tasks/:id", "destination": "/index.html" }
   ]
 }

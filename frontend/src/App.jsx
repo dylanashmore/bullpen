@@ -329,7 +329,7 @@ function ModelSlider({ value, onChange, disabled = false }) {
           onKeyDown={handleKeyDown}
         />
         <div className="model-range-labels" aria-hidden="true">
-          {geminiModels.map((model, index) => <span className={index === previewIndex ? "active" : ""} key={model.id}>{model.label}</span>)}
+          {geminiModels.map((model, index) => <span className={index === previewIndex ? "active" : ""} key={model.label}>{model.label}</span>)}
         </div>
       </div>
     </fieldset>

@@ -54,6 +54,12 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ directive }),
   }),
+  // Generic multi-field update — used by the full agent setup editor.
+  updateAgent: (id, fields) => request(`/api/agents/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  }),
   updateAgentContext: (id, context) => request(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

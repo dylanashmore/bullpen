@@ -518,8 +518,85 @@ function AgentInstructions({ agent, onUpdate }) {
   );
 }
 
-function AgentSetupSummary({ agent, dependencyName }) {
+function agentToSetupForm(agent) {
+  return {
+    name: agent.name || "",
+    specialty: agent.specialty || "",
+    inputType: agent.inputType || "",
+    outputType: agent.outputType || "text",
+    dependsOnAgent: agent.dependsOnAgent || "",
+    acceptsFiles: Boolean(agent.acceptsFiles),
+    tone: agent.tone || "",
+    style: agent.style || "",
+    inspiredBy: agent.inspiredBy || "",
+  };
+}
+
+function AgentSetupSummary({ agent, agents, dependencyName, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(() => agentToSetupForm(agent));
+
+  useEffect(() => { if (!editing) setForm(agentToSetupForm(agent)); }, [agent, editing]);
+
+  function field(key) {
+    return { value: form[key], onChange: (event) => setForm((current) => ({ ...current, [key]: event.target.value })) };
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    if (!form.name.trim() || !form.specialty.trim() || !form.inputType.trim()) return;
+    setSaving(true);
+    const ok = await onUpdate(agent.id, {
+      name: form.name.trim(),
+      specialty: form.specialty.trim(),
+      inputType: form.inputType.trim(),
+      outputType: form.outputType,
+      dependsOnAgent: form.dependsOnAgent || null,
+      acceptsFiles: form.dependsOnAgent ? false : form.acceptsFiles,
+      tone: form.tone.trim() || null,
+      style: form.style.trim() || null,
+      inspiredBy: form.inspiredBy.trim() || null,
+    });
+    setSaving(false);
+    if (ok) setEditing(false);
+  }
+
+  if (editing) {
+    const dependencyOptions = agents.filter((item) => item.id !== agent.id);
+    return (
+      <form className="agent-setup-editor" onSubmit={save}>
+        <label className="quick-field"><span>Name</span><input {...field("name")} required maxLength="32" /></label>
+        <label className="quick-field"><span>Specialty</span><input {...field("specialty")} required maxLength="48" /></label>
+        <label className="quick-field"><span>Input type</span><input {...field("inputType")} required maxLength="48" /></label>
+        <label className="quick-field"><span>Output type</span>
+          <select {...field("outputType")}>{outputTypes.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select>
+        </label>
+        <label className="quick-field">
+          <span>Depends on</span>
+          <select value={form.dependsOnAgent} onChange={(event) => setForm((current) => ({ ...current, dependsOnAgent: event.target.value, acceptsFiles: event.target.value ? false : current.acceptsFiles }))}>
+            <option value="">No dependency</option>
+            {dependencyOptions.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        <label className="quick-field"><span>Tone</span><input {...field("tone")} maxLength="80" placeholder="e.g. Confident and concise" /></label>
+        <label className="quick-field full-width"><span>Visual style</span><input {...field("style")} maxLength="120" placeholder="e.g. Editorial, minimal, cinematic" /></label>
+        <label className="quick-field full-width"><span>Inspired by</span><input {...field("inspiredBy")} maxLength="120" placeholder="e.g. Swiss design or Stripe's website" /></label>
+        <label className={`file-capability-toggle${form.dependsOnAgent ? " disabled" : ""}`}>
+          <input type="checkbox" checked={form.acceptsFiles} onChange={(event) => setForm((current) => ({ ...current, acceptsFiles: event.target.checked }))} disabled={Boolean(form.dependsOnAgent)} />
+          <span><strong>Accept file uploads</strong><small>{form.dependsOnAgent ? "Only entry-point agents receive files" : "Allow files when this agent starts a task"}</small></span>
+        </label>
+        <div className="agent-instructions-actions">
+          <button type="button" onClick={() => { setForm(agentToSetupForm(agent)); setEditing(false); }}>Cancel</button>
+          <button className="save" type="submit" disabled={saving}>{saving ? "Saving…" : "Save setup"}</button>
+        </div>
+      </form>
+    );
+  }
+
   const items = [
+    ["Name", agent.name],
+    ["Specialty", agent.specialty || "None"],
     ["Input", agent.inputType],
     ["Output", agent.outputType],
     ["Depends on", dependencyName || "None"],
@@ -533,11 +610,12 @@ function AgentSetupSummary({ agent, dependencyName }) {
     <details className="agent-setup-summary">
       <summary>Agent setup <span>View</span></summary>
       <div>{items.map(([label, value]) => <p key={label}><span>{label}</span><strong>{value}</strong></p>)}</div>
+      <button type="button" className="edit-setup-button" onClick={() => setEditing(true)}>Edit setup</button>
     </details>
   );
 }
 
-function AgentCard({ agent, dependencyName, assignedTask, taskCount, onOpenTask, onStopTask, onUpdateInstructions, onRemove, onModelChange }) {
+function AgentCard({ agent, agents, dependencyName, assignedTask, taskCount, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const working = agent.status === "working";
   const assignedStep = assignedTask?.steps?.find((step) => step.agentId === agent.id);
@@ -560,7 +638,7 @@ function AgentCard({ agent, dependencyName, assignedTask, taskCount, onOpenTask,
         </div>
       </div>
       <AgentInstructions agent={agent} onUpdate={onUpdateInstructions} />
-      <AgentSetupSummary agent={agent} dependencyName={dependencyName} />
+      <AgentSetupSummary agent={agent} agents={agents} dependencyName={dependencyName} onUpdate={onUpdateSetup} />
       <div className="agent-work-grid">
         <div className={`agent-work-box${assignedTask ? "" : " awaiting"}`}>
           <span>Today's task</span>
@@ -581,7 +659,7 @@ function AgentCard({ agent, dependencyName, assignedTask, taskCount, onOpenTask,
   );
 }
 
-function AgentsView({ agents, tasks, connection, onCreate, onOpenTask, onStopTask, onUpdateInstructions, onRemove, onModelChange }) {
+function AgentsView({ agents, tasks, connection, onCreate, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
   const workingCount = agents.filter((agent) => agent.status === "working").length;
   if (agents.length === 0) return <EmptyAgents onCreate={onCreate} connection={connection} />;
   return (
@@ -602,7 +680,7 @@ function AgentsView({ agents, tasks, connection, onCreate, onOpenTask, onStopTas
             return step?.status === "working" || step?.status === "pending";
           }) || agentTasks[0];
           const dependencyName = agents.find((item) => item.id === agent.dependsOnAgent)?.name;
-          return <AgentCard key={agent.id} agent={agent} dependencyName={dependencyName} assignedTask={assignedTask} taskCount={agentTasks.length} onOpenTask={onOpenTask} onStopTask={onStopTask} onUpdateInstructions={onUpdateInstructions} onRemove={onRemove} onModelChange={onModelChange} />;
+          return <AgentCard key={agent.id} agent={agent} agents={agents} dependencyName={dependencyName} assignedTask={assignedTask} taskCount={agentTasks.length} onOpenTask={onOpenTask} onStopTask={onStopTask} onUpdateInstructions={onUpdateInstructions} onUpdateSetup={onUpdateSetup} onRemove={onRemove} onModelChange={onModelChange} />;
         })}
       </div>
     </>
@@ -913,6 +991,18 @@ export default function App() {
     }
   }
 
+  async function updateAgentSetup(id, fields) {
+    try {
+      const updated = await api.updateAgent(id, fields);
+      setAgents((current) => current.map((agent) => agent.id === id ? updated : agent));
+      notify(`${updated.name}'s setup was updated.`);
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
+    }
+  }
+
   // Drafts a context suggestion from step feedback — returns the suggestion
   // (string or null) without persisting anything, or undefined on failure.
   async function suggestFeedbackContext(id, payload) {
@@ -1044,7 +1134,7 @@ export default function App() {
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
-              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onRemove={removeAgent} onModelChange={changeAgentModel} />
+              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />}
           </section>
         </main>

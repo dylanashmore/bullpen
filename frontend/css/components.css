@@ -366,6 +366,11 @@
 .quick-add-mark { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(140, 240, 181, 0.28); border-radius: 11px; color: var(--accent); background: rgba(140, 240, 181, 0.07); font-size: 20px; }
 .quick-field { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .quick-field > span small { margin-left: 5px; color: var(--subtle); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.optimize-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: -4px 0 2px; }
+.optimize-error { color: var(--bullpen-red-bright); font-size: 9px; }
+.optimize-button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid rgba(184, 95, 98, 0.3); border-radius: 7px; color: var(--bullpen-red-bright); background: rgba(184, 95, 98, 0.06); font-size: 9px; font-weight: 700; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.optimize-button:hover:not(:disabled) { border-color: var(--bullpen-red-bright); background: rgba(184, 95, 98, 0.14); }
+.optimize-button:disabled { opacity: 0.45; cursor: not-allowed; }
 .quick-field input, .quick-field select, .quick-field textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: rgba(5, 14, 11, 0.78); padding: 8px 10px; font-size: 12px; font-weight: 500; letter-spacing: 0; line-height: 1.4; outline: 0; resize: none; text-transform: none; }
 .quick-field input:focus, .quick-field select:focus, .quick-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(140, 240, 181, 0.08); }
 .quick-field input::placeholder, .quick-field textarea::placeholder { color: #52675f; }
@@ -422,7 +427,12 @@
 .task-error { border: 1px solid rgba(212, 122, 125, 0.25); color: var(--bullpen-red-bright); background: var(--bullpen-red-soft); }
 .task-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 15px; }
 .task-step { border: 1px solid var(--line); border-radius: 9px; background: rgba(4, 13, 10, 0.52); }
-.task-step summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; color: var(--text); font-size: 11px; cursor: pointer; }
+.task-step summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; color: var(--text); font-size: 11px; cursor: pointer; list-style: none; transition: background 120ms ease; }
+.task-step summary::-webkit-details-marker { display: none; }
+.task-step summary:hover { background: rgba(255, 255, 255, 0.025); }
+.task-step summary span:first-child { display: flex; align-items: center; gap: 8px; }
+.task-step summary span:first-child::before { content: "▸"; display: inline-block; color: var(--subtle); font-size: 9px; transition: transform 140ms ease; }
+.task-step[open] summary span:first-child::before { transform: rotate(90deg); color: var(--accent); }
 .task-step summary span:last-child { color: var(--muted); font-family: var(--font-mono); font-size: 8px; text-transform: uppercase; }
 .task-step.working summary span:last-child { color: var(--warning); }
 .task-step.done summary span:last-child { color: var(--accent); }
@@ -430,6 +440,14 @@
 .task-step.cancelled summary span:last-child { color: var(--bullpen-red-bright); }
 .task-output-text { max-height: 260px; overflow: auto; padding: 0 11px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .task-output-image { display: block; width: min(100%, 560px); margin: 0 11px 12px; border-radius: 8px; }
+.step-feedback-toggle { display: block; margin: 0 11px 12px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
+.step-feedback-toggle:hover { text-decoration: underline; }
+.step-feedback-form, .step-feedback-suggestion { margin: 0 11px 12px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 14, 11, 0.45); }
+.step-feedback-form textarea { width: 100%; min-height: 52px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: rgba(3, 10, 8, 0.72); padding: 8px; font-size: 11px; line-height: 1.45; outline: 0; resize: vertical; }
+.step-feedback-form textarea::placeholder { color: #52675f; }
+.step-feedback-form textarea:focus { border-color: var(--accent); }
+.step-feedback-suggestion span { display: block; margin-bottom: 6px; color: var(--subtle); font-size: 7px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.step-feedback-suggestion p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .task-progress { height: 2px; margin: 16px -22px -20px; overflow: hidden; background: var(--line); }
 .task-progress span { display: block; width: 38%; height: 100%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: task-loading 1.5s ease-in-out infinite; }
 @keyframes task-loading { from { transform: translateX(-110%); } to { transform: translateX(300%); } }

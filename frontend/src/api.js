@@ -80,6 +80,11 @@ export const api = {
     body: JSON.stringify({ description, goal, term }),
   }),
   deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  optimizeText: (text, kind) => request("/api/optimize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, kind }),
+  }),
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   createTask: ({ input, file, agentId = null }) => {

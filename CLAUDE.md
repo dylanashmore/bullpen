@@ -247,8 +247,15 @@ src/
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
 api/
-  [...path].js          — Vercel serverless entrypoint, re-exports the same Express app from
-                         src/app.js. Agent/Task state now persists via Redis (see Storage above)
+  [...path].js          — Vercel serverless entrypoint for one-segment endpoints such as
+                         /api/health, /api/agents, /api/tasks, and /api/optimize
+  agents/               — explicit Vercel entrypoints for /api/agents/:id,
+                         /api/agents/:id/feedback, and /api/agents/draft-team
+  tasks/                — explicit Vercel entrypoint for /api/tasks/:id/cancel. These nested
+                         files are required because Vercel's Vite-generated route manifest
+                         treats the top-level [...path] function as a single path segment.
+                         Every entrypoint re-exports the same Express app from src/app.js.
+                         Agent/Task state now persists via Redis (see Storage above)
                          as long as `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or the Upstash-named
                          equivalents) are set in the Vercel project — without them this falls
                          back to the old per-instance in-memory store and the original

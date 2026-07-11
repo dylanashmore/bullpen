@@ -12,7 +12,10 @@
   --accent: #8cf0b5;
   --accent-strong: #62d995;
   --accent-ink: #072015;
-  --danger: #ff9f9f;
+  --bullpen-red: #b85f62;
+  --bullpen-red-bright: #d47a7d;
+  --bullpen-red-soft: rgba(184, 95, 98, 0.14);
+  --danger: var(--bullpen-red-bright);
   --warning: #f2cd7c;
   --radius-sm: 10px;
   --radius-md: 16px;

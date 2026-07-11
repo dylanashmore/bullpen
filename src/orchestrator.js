@@ -14,6 +14,12 @@ export async function pickChainForTask(input, agents = getAllAgents()) {
     throw new Error('Orchestrator did not select any agent for this task');
   }
 
+  return resolveAgentChain(calledIds);
+}
+
+// Builds a dependency-complete chain from one or more explicit agent ids.
+// This is also used when the frontend assigns a task directly to one worker.
+export function resolveAgentChain(agentIds) {
   const chainIds = new Set();
   const addWithAncestors = (id) => {
     if (chainIds.has(id)) return;
@@ -22,7 +28,7 @@ export async function pickChainForTask(input, agents = getAllAgents()) {
     if (agent.dependsOnAgent) addWithAncestors(agent.dependsOnAgent);
     chainIds.add(id);
   };
-  calledIds.forEach(addWithAncestors);
+  agentIds.forEach(addWithAncestors);
 
   return [...chainIds].map((id) => getAgentById(id));
 }
@@ -37,17 +43,21 @@ export async function pickChainForTask(input, agents = getAllAgents()) {
 // dependsOnAgent — the ones that receive the raw task input) that opted in
 // via acceptsFiles; every other agent runs exactly as it did before files
 // existed. The buffer lives only for this call and is never persisted.
-export async function runChain(task, fileBuffer) {
+export async function runChain(task, fileBuffer, assignedAgentId = null) {
   task.status = 'working';
 
   let chainAgents;
   try {
-    chainAgents = await pickChainForTask(task.input);
+    chainAgents = assignedAgentId
+      ? resolveAgentChain([assignedAgentId])
+      : await pickChainForTask(task.input);
   } catch (err) {
     task.status = 'error';
     task.error = err.message;
     return;
   }
+
+  if (task.cancelRequested) return;
 
   if (fileBuffer && task.file) {
     const canUseFile = chainAgents.some((agent) => !agent.dependsOnAgent && agent.acceptsFiles);
@@ -61,7 +71,20 @@ export async function runChain(task, fileBuffer) {
   const outputs = new Map();
   const remaining = new Set(chainAgents.map((agent) => agent.id));
 
+  const cancelRemaining = () => {
+    remaining.forEach((id) => {
+      const step = task.steps.find((item) => item.agentId === id);
+      if (step && step.status !== 'done' && step.status !== 'error') step.status = 'cancelled';
+      const agent = byId.get(id);
+      if (agent) agent.status = 'idle';
+    });
+  };
+
   while (remaining.size > 0) {
+    if (task.cancelRequested) {
+      cancelRemaining();
+      return;
+    }
     const readyIds = [...remaining].filter((id) => {
       const agent = byId.get(id);
       return !agent.dependsOnAgent || outputs.has(agent.dependsOnAgent);
@@ -77,6 +100,11 @@ export async function runChain(task, fileBuffer) {
       readyIds.map(async (id) => {
         const agent = byId.get(id);
         const step = task.steps.find((s) => s.agentId === id);
+        if (task.cancelRequested) {
+          step.status = 'cancelled';
+          remaining.delete(id);
+          return;
+        }
         step.status = 'working';
         agent.status = 'working';
         try {
@@ -87,14 +115,22 @@ export async function runChain(task, fileBuffer) {
           const output = agent.outputType === 'image'
             ? await generateImage(stepInput)
             : await runAgentPrompt(agent, stepInput, stepFile);
+          if (task.cancelRequested) {
+            step.status = 'cancelled';
+            return;
+          }
           outputs.set(id, output);
           step.output = output;
           step.status = 'done';
         } catch (err) {
-          step.status = 'error';
-          step.output = err.message;
-          task.status = 'error';
-          task.error = `Agent "${id}" failed: ${err.message}`;
+          if (task.cancelRequested) {
+            step.status = 'cancelled';
+          } else {
+            step.status = 'error';
+            step.output = err.message;
+            task.status = 'error';
+            task.error = `Agent "${id}" failed: ${err.message}`;
+          }
         } finally {
           agent.status = 'idle';
           remaining.delete(id);
@@ -102,8 +138,12 @@ export async function runChain(task, fileBuffer) {
       })
     );
 
+    if (task.cancelRequested) {
+      cancelRemaining();
+      return;
+    }
     if (task.status === 'error') return;
   }
 
-  task.status = 'done';
+  if (!task.cancelRequested) task.status = 'done';
 }

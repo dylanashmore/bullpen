@@ -1,4 +1,5 @@
 const VALID_OUTPUT_TYPES = new Set(['text', 'image', 'structured', 'feedback']);
+import { DEFAULT_AGENT_MODEL } from '../lib/models.js';
 
 export class Agent {
   constructor({
@@ -11,6 +12,11 @@ export class Agent {
     tone = null,
     status = 'idle',
     acceptsFiles = false,
+    specialty = null,
+    directive = null,
+    model = DEFAULT_AGENT_MODEL,
+    style = null,
+    inspiredBy = null,
   }) {
     if (!VALID_OUTPUT_TYPES.has(outputType)) {
       throw new Error(`Invalid outputType "${outputType}". Must be one of: ${[...VALID_OUTPUT_TYPES].join(', ')}`);
@@ -24,6 +30,11 @@ export class Agent {
     this.tone = tone;
     this.status = status;
     this.acceptsFiles = acceptsFiles;
+    this.specialty = specialty;
+    this.directive = directive || role;
+    this.model = model;
+    this.style = style;
+    this.inspiredBy = inspiredBy;
   }
 
   buildSystemPrompt() {
@@ -33,6 +44,12 @@ export class Agent {
     ];
     if (this.tone) {
       lines.push(`Tone: ${this.tone}.`);
+    }
+    if (this.style) {
+      lines.push(`Style: ${this.style}.`);
+    }
+    if (this.inspiredBy) {
+      lines.push(`Draw inspiration from: ${this.inspiredBy}. Do not copy protected work exactly; use it only as high-level creative direction.`);
     }
     lines.push(`You receive input of type "${this.inputType}" and must produce output of type "${this.outputType}".`);
     lines.push('Respond with only the requested output itself — no preamble, no meta-commentary about what you are doing.');
@@ -72,6 +89,11 @@ export class Agent {
       tone: this.tone,
       status: this.status,
       acceptsFiles: this.acceptsFiles,
+      specialty: this.specialty,
+      directive: this.directive,
+      model: this.model,
+      style: this.style,
+      inspiredBy: this.inspiredBy,
     };
   }
 }

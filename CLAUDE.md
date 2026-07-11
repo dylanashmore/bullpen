@@ -65,11 +65,18 @@ through `writer → designer → artist`, each step's output feeding the next.
 
 ## Locked API contract
 - `GET /api/agents` → array of agent objects (`Agent.toJSON()` shape: `id, name, role,
-  inputType, outputType, dependsOnAgent, tone, status, acceptsFiles`)
+  inputType, outputType, dependsOnAgent, tone, status, acceptsFiles, specialty, directive,
+  model, style, inspiredBy`)
 - `POST /api/agents` → body `{ name, role, inputType, outputType, dependsOnAgent, tone,
   acceptsFiles }`, creates an agent. `name/role/inputType/outputType` required;
   `dependsOnAgent` must reference an existing agent id if provided; `acceptsFiles` optional
-  boolean, defaults to `false`.
+  boolean, defaults to `false`. `specialty`, `directive`, `model`, `style`, and `inspiredBy`
+  are optional; model is validated against the supported Gemini 2.5 text models. Tone, style,
+  and inspiration are included in the specialist system prompt.
+- `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty }`; changes the
+  agent's model or editable instructions without recreating it.
+- `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
+- `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
   createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output }`, step status one of
   `pending|working|done|error`. `file` is `{ name, mimeType } | null` — metadata only, set when
@@ -79,11 +86,16 @@ through `writer → designer → artist`, each step's output feeding the next.
   `steps` and `status: "pending"`. Execution (routing + running each agent) continues
   asynchronously; the frontend polls `GET /api/tasks` to watch `steps` fill in and `status`
   progress to `working` → `done`/`error`. Two ways to call it, both still supported:
-  - `Content-Type: application/json`, body `{ input: "..." }` — unchanged, no attachment.
+  - `Content-Type: application/json`, body `{ input: "...", agentId?: "writer" }` — no
+    attachment. When `agentId` is supplied, the task targets that agent and automatically
+    includes its declared upstream dependencies; without it, Gemini chooses the chain.
   - `Content-Type: multipart/form-data`, fields `input` (text) and `file` (the upload) — for
     tasks with an attachment. `input` is still required and validated the same way either way.
     Max upload size 20MB, one file per task. The response's `file` field reflects what was
     attached (or `null` for the JSON path).
+- `POST /api/tasks/:id/cancel` → cooperatively cancels a pending/working task, marks unfinished
+  steps `cancelled`, and returns involved agents to `idle`. An in-flight provider request cannot
+  be forcibly terminated, but its eventual result is discarded and cannot revive the task.
 
 ## File structure
 ```
@@ -92,6 +104,7 @@ src/
     Agent.js          — Agent class: buildSystemPrompt, toFunctionDeclaration, toJSON
     agentStore.js      — in-memory agent registry, seeds the 4 default agents
   lib/
+    models.js          — supported per-agent Gemini model ids and default model
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
                          the Gemini Files API), askOrchestrator() (routing via function calling)
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
@@ -100,7 +113,7 @@ src/
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents)
   routes/
-    agents.js          — GET/POST /api/agents, with validation
+    agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
                          an optional multipart file upload alongside the JSON path
   server.js             — Express app wiring, JSON/error middleware, seeds agents on boot
@@ -149,8 +162,8 @@ No shared workspace/monorepo tooling; it has its own `package.json` and is run i
 ```
 frontend/
   src/
-    App.jsx            — entire app: Sidebar, Topbar, AgentsView/TasksView, AgentDialog,
-                         TaskDialog, Toast, all in one file
+    App.jsx            — API-backed agents, live task feed, polling, file uploads, app UI
+    api.js             — fetch wrapper for health, agent, and task endpoints
     main.jsx            — React root, imports the three CSS files
   css/
     theme.css, layout.css, components.css
@@ -159,7 +172,15 @@ frontend/
   index.html, vite.config.js, package.json
 ```
 
-**Current state (as of last review): not yet wired to the backend.** `App.jsx` persists
+**Integration update (current):** The React frontend is wired to the Express API. Vite proxies
+`/api` and `/health` to port 3000 in development; `VITE_API_URL` supports split-origin deploys.
+Agents load from `GET /api/agents`; create, model update, and remove operations call the matching
+API routes. Tasks submit raw orchestrator input (plus one optional file), poll every 2 seconds,
+and render live task/step status, text or image output, upload metadata, warnings, and errors.
+The sidebar reports backend/key readiness. Browser `localStorage` is no longer the source of
+truth; both backend stores are in memory and reset when the backend restarts.
+
+**Historical note (superseded):** `App.jsx` previously persisted
 everything to `localStorage` (key `bullpen-workspace-v1`) and never calls `fetch` against
 `/api/*`. Its data shapes also don't match the API contract above:
 - Frontend agent: `{ id, name, role (from a fixed 6-item specialty list), directive, status:
@@ -169,7 +190,7 @@ everything to `localStorage` (key `bullpen-workspace-v1`) and never calls `fetch
   one agent by the user, no `steps[]`, no polling loop, `status` values don't match
   `pending|working|done|error`.
 
-**Planned next step (agreed with the user):** rework `AgentDialog`'s "Specialty" field into an
+**Superseded plan (the API integration above has landed):** rework `AgentDialog`'s "Specialty" field into an
 "Agent" dropdown of full templates mirroring the backend's seeded agents (Researcher / Writer /
 Designer / Artist — same `role`, `inputType`, `outputType`, `dependsOnAgent`, `tone`), plus a
 "Create your own" option that unlocks all those fields for manual entry. Submit always

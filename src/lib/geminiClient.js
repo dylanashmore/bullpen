@@ -1,6 +1,6 @@
 import { GoogleGenAI, FunctionCallingConfigMode, createUserContent, createPartFromUri } from '@google/genai';
+import { DEFAULT_AGENT_MODEL } from './models.js';
 
-const AGENT_MODEL = 'gemini-2.5-flash';
 const ORCHESTRATOR_MODEL = 'gemini-2.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
@@ -56,7 +56,7 @@ export async function runAgentPrompt(agent, inputText, file) {
       : inputText;
 
     const response = await getClient().models.generateContent({
-      model: AGENT_MODEL,
+      model: agent.model || DEFAULT_AGENT_MODEL,
       contents,
       config: {
         systemInstruction: agent.buildSystemPrompt(),

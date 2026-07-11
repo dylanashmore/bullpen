@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Agent } from './Agent.js';
+import { DEFAULT_AGENT_MODEL } from '../lib/models.js';
 
 const agents = new Map();
 
@@ -27,11 +28,39 @@ function uniqueId(candidate) {
 // explicitId lets seeding assign stable, readable ids (e.g. "writer") that
 // dependsOnAgent references and function-call routing rely on.
 export function addAgent(
-  { name, role, inputType, outputType, dependsOnAgent = null, tone = null, acceptsFiles = false },
+  {
+    name,
+    role,
+    inputType,
+    outputType,
+    dependsOnAgent = null,
+    tone = null,
+    acceptsFiles = false,
+    specialty = null,
+    directive = null,
+    model = DEFAULT_AGENT_MODEL,
+    style = null,
+    inspiredBy = null,
+  },
   explicitId
 ) {
   const id = uniqueId(explicitId || slugify(name));
-  const agent = new Agent({ id, name, role, inputType, outputType, dependsOnAgent, tone, status: 'idle', acceptsFiles });
+  const agent = new Agent({
+    id,
+    name,
+    role,
+    inputType,
+    outputType,
+    dependsOnAgent,
+    tone,
+    status: 'idle',
+    acceptsFiles,
+    specialty,
+    directive,
+    model,
+    style,
+    inspiredBy,
+  });
   agents.set(id, agent);
   return agent;
 }
@@ -42,6 +71,14 @@ export function getAllAgents() {
 
 export function getAgentById(id) {
   return agents.get(id);
+}
+
+export function removeAgent(id) {
+  const dependent = getAllAgents().find((agent) => agent.dependsOnAgent === id);
+  if (dependent) {
+    throw new Error(`Agent is required by "${dependent.name}" and cannot be removed`);
+  }
+  return agents.delete(id);
 }
 
 export function seedDefaultAgents() {
@@ -56,6 +93,8 @@ export function seedDefaultAgents() {
       dependsOnAgent: null,
       tone: 'thorough and neutral',
       acceptsFiles: true,
+      specialty: 'Research',
+      directive: 'Gather trustworthy background facts, context, and key points.',
     },
     'researcher'
   );
@@ -68,6 +107,8 @@ export function seedDefaultAgents() {
       outputType: 'text',
       dependsOnAgent: null,
       tone: 'engaging and clear',
+      specialty: 'Writing',
+      directive: 'Write clear, well-structured copy, posts, and articles.',
     },
     'writer'
   );
@@ -80,6 +121,8 @@ export function seedDefaultAgents() {
       outputType: 'text',
       dependsOnAgent: 'writer',
       tone: 'visually descriptive',
+      specialty: 'Design',
+      directive: 'Turn written copy into a detailed visual design brief.',
     },
     'designer'
   );
@@ -92,6 +135,8 @@ export function seedDefaultAgents() {
       outputType: 'image',
       dependsOnAgent: 'designer',
       tone: null,
+      specialty: 'Image generation',
+      directive: 'Generate a final image from a visual design brief.',
     },
     'artist'
   );

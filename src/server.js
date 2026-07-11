@@ -13,7 +13,10 @@ app.use(express.json());
 app.use('/api/agents', agentsRouter);
 app.use('/api/tasks', tasksRouter);
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.json({
+  ok: true,
+  geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+}));
 
 // Catches malformed JSON bodies (from express.json()) and any error thrown
 // synchronously in a route handler, so a bad request never crashes the server.

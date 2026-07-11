@@ -60,6 +60,21 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Walks dependsOnAgent pointers upward from candidateDependsOn; true if agentId
+// is reached, meaning pointing agentId at candidateDependsOn would close a loop.
+async function wouldCreateCycle(agentId, candidateDependsOn) {
+  let currentId = candidateDependsOn;
+  const seen = new Set();
+  while (currentId) {
+    if (currentId === agentId) return true;
+    if (seen.has(currentId)) return false; // pre-existing cycle elsewhere; not this edit's problem
+    seen.add(currentId);
+    const current = await getAgentById(currentId);
+    currentId = current?.dependsOnAgent ?? null;
+  }
+  return false;
+}
+
 router.patch('/:id', async (req, res) => {
   try {
     const agent = await getAgentById(req.params.id);
@@ -67,6 +82,21 @@ router.patch('/:id', async (req, res) => {
 
     const body = req.body ?? {};
     let changed = false;
+
+    const requireNonEmptyString = (field, label) => {
+      if (typeof body[field] !== 'string' || !body[field].trim()) {
+        res.status(400).json({ error: `${label} must be a non-empty string` });
+        return null;
+      }
+      return body[field].trim();
+    };
+    const requireOptionalString = (field, label) => {
+      if (body[field] !== null && typeof body[field] !== 'string') {
+        res.status(400).json({ error: `${label} must be a string or null` });
+        return undefined;
+      }
+      return body[field]?.trim() || null;
+    };
 
     if (body.model !== undefined) {
       if (!isSupportedAgentModel(body.model)) {
@@ -76,24 +106,90 @@ router.patch('/:id', async (req, res) => {
       changed = true;
     }
 
+    if (body.name !== undefined) {
+      const name = requireNonEmptyString('name', 'name');
+      if (name === null) return;
+      agent.name = name;
+      changed = true;
+    }
+
     if (body.directive !== undefined) {
-      if (typeof body.directive !== 'string' || !body.directive.trim()) {
-        return res.status(400).json({ error: 'directive must be a non-empty string' });
-      }
-      agent.directive = body.directive.trim();
-      agent.role = body.directive.trim();
+      const directive = requireNonEmptyString('directive', 'directive');
+      if (directive === null) return;
+      agent.directive = directive;
+      agent.role = directive;
       changed = true;
     }
 
     if (body.specialty !== undefined) {
-      if (typeof body.specialty !== 'string' || !body.specialty.trim()) {
-        return res.status(400).json({ error: 'specialty must be a non-empty string' });
-      }
-      agent.specialty = body.specialty.trim();
+      const specialty = requireNonEmptyString('specialty', 'specialty');
+      if (specialty === null) return;
+      agent.specialty = specialty;
       changed = true;
     }
 
-    if (!changed) return res.status(400).json({ error: 'Provide model, directive, or specialty to update' });
+    if (body.inputType !== undefined) {
+      const inputType = requireNonEmptyString('inputType', 'inputType');
+      if (inputType === null) return;
+      agent.inputType = inputType;
+      changed = true;
+    }
+
+    if (body.outputType !== undefined) {
+      if (!VALID_OUTPUT_TYPES.includes(body.outputType)) {
+        return res.status(400).json({ error: `outputType must be one of: ${VALID_OUTPUT_TYPES.join(', ')}` });
+      }
+      agent.outputType = body.outputType;
+      changed = true;
+    }
+
+    if (body.tone !== undefined) {
+      const tone = requireOptionalString('tone', 'tone');
+      if (tone === undefined) return;
+      agent.tone = tone;
+      changed = true;
+    }
+
+    if (body.style !== undefined) {
+      const style = requireOptionalString('style', 'style');
+      if (style === undefined) return;
+      agent.style = style;
+      changed = true;
+    }
+
+    if (body.inspiredBy !== undefined) {
+      const inspiredBy = requireOptionalString('inspiredBy', 'inspiredBy');
+      if (inspiredBy === undefined) return;
+      agent.inspiredBy = inspiredBy;
+      changed = true;
+    }
+
+    if (body.acceptsFiles !== undefined) {
+      if (typeof body.acceptsFiles !== 'boolean') {
+        return res.status(400).json({ error: 'acceptsFiles must be a boolean' });
+      }
+      agent.acceptsFiles = body.acceptsFiles;
+      changed = true;
+    }
+
+    if (body.dependsOnAgent !== undefined) {
+      const nextDependsOnAgent = body.dependsOnAgent || null;
+      if (nextDependsOnAgent) {
+        if (nextDependsOnAgent === agent.id) {
+          return res.status(400).json({ error: 'An agent cannot depend on itself' });
+        }
+        if (!(await getAgentById(nextDependsOnAgent))) {
+          return res.status(400).json({ error: `dependsOnAgent "${nextDependsOnAgent}" does not match an existing agent id` });
+        }
+        if (await wouldCreateCycle(agent.id, nextDependsOnAgent)) {
+          return res.status(400).json({ error: `Setting dependsOnAgent to "${nextDependsOnAgent}" would create a dependency cycle` });
+        }
+      }
+      agent.dependsOnAgent = nextDependsOnAgent;
+      changed = true;
+    }
+
+    if (!changed) return res.status(400).json({ error: 'Provide at least one field to update' });
 
     await saveAgent(agent);
     res.json(agent.toJSON());

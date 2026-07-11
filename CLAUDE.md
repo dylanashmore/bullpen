@@ -99,10 +99,16 @@ example used in tests and docs below — just note it no longer exists until som
   `dependsOnAgent` must reference an existing agent id if provided; `acceptsFiles` optional
   boolean, defaults to `false`. `specialty`, `directive`, `model`, `style`, and `inspiredBy`
   are optional; `model` is validated against `SUPPORTED_AGENT_MODELS` (`src/lib/models.js`) —
-  currently just `gemini-3.5-flash`, see Tech stack above for why. Tone, style, and inspiration
-  are included in the specialist system prompt.
-- `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty }`; changes the
-  agent's model or editable instructions without recreating it.
+  `gemini-flash-lite-latest` / `gemini-3.5-flash` / `gemini-pro-latest`, all verified live, see
+  Tech stack above. Tone, style, and inspiration are included in the specialist system prompt.
+- `PATCH /api/agents/:id` → body may contain any subset of `{ name, specialty, directive,
+  inputType, outputType, tone, style, inspiredBy, acceptsFiles, dependsOnAgent, model }` — full
+  parity with `POST`, so any field set at creation can be changed later without recreating the
+  agent. `outputType` is validated against the same enum as creation; `dependsOnAgent` is
+  validated for existence and checked against creating a dependency cycle (walks the chain via
+  `wouldCreateCycle` in `routes/agents.js` — self-reference and any multi-hop loop are both
+  rejected with 400, since nothing else in the codebase prevented this before). At least one
+  field must be provided.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],

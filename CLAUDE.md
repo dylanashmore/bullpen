@@ -56,10 +56,13 @@ Every specialist agent is an instance of the `Agent` class (`src/agents/Agent.js
 This object model is what lets the orchestrator build both single-agent tasks and multi-step
 pipelines generically, without hardcoding per-agent logic anywhere.
 
-Default seeded agents (`src/agents/agentStore.js`): `researcher` (`acceptsFiles: true`),
-`writer`, `designer` (depends on `writer`), `artist` (depends on `designer`,
-`outputType: "image"`). Example pipeline: a task asking for a finished promotional image routes
-through `writer → designer → artist`, each step's output feeding the next.
+**No agents are seeded at boot** — the roster starts empty and every agent (including any
+researcher/writer/designer/artist-style pipeline) is created by the user via `POST
+/api/agents`. This was previously auto-seeded (`seedDefaultAgents()` in `agentStore.js`) but
+was deliberately removed so a fresh sign-in doesn't come pre-populated — the frontend's
+`EmptyAgents` empty state (`frontend/src/App.jsx`) handles the zero-agent case. A four-agent
+`writer → designer → artist` (plus standalone `researcher`) pipeline is still the canonical
+example used in tests and docs below — just note it no longer exists until someone creates it.
 
 ## Orchestrator routing (function calling, not keyword matching)
 `src/orchestrator.js`:
@@ -116,7 +119,8 @@ through `writer → designer → artist`, each step's output feeding the next.
 src/
   agents/
     Agent.js          — Agent class: buildSystemPrompt, toFunctionDeclaration, toJSON
-    agentStore.js      — in-memory agent registry, seeds the 4 default agents
+    agentStore.js      — in-memory agent registry (addAgent, getAllAgents, getAgentById,
+                         removeAgent). No seeding — starts empty on every boot.
   lib/
     models.js          — supported per-agent Gemini model ids and default model
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
@@ -130,7 +134,16 @@ src/
     agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
                          an optional multipart file upload alongside the JSON path
-  server.js             — Express app wiring, JSON/error middleware, seeds agents on boot
+  app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
+                         the shared module imported by both server.js and api/[...path].js
+  server.js             — local dev entrypoint only: loads .env, calls app.listen()
+api/
+  [...path].js          — Vercel serverless entrypoint, re-exports the same Express app from
+                         src/app.js. **Known issue, not yet resolved:** in-memory Agent/Task
+                         state is not safe under serverless — cold starts can reset it and
+                         POST /api/tasks's fire-and-forget runChain() may not finish executing
+                         after the response is sent. Treat the live Vercel deploy as unreliable
+                         for anything beyond a UI preview until this is addressed.
 scripts/
   test-requests.js      — `npm run test:api`, exercises agent creation, single-agent task,
                          and full media pipeline against a running local server
@@ -194,38 +207,16 @@ and render live task/step status, text or image output, upload metadata, warning
 The sidebar reports backend/key readiness. Browser `localStorage` is no longer the source of
 truth; both backend stores are in memory and reset when the backend restarts.
 
-**Historical note (superseded):** `App.jsx` previously persisted
-everything to `localStorage` (key `bullpen-workspace-v1`) and never calls `fetch` against
-`/api/*`. Its data shapes also don't match the API contract above:
-- Frontend agent: `{ id, name, role (from a fixed 6-item specialty list), directive, status:
-  "ACTIVE", createdAt }` — no `inputType`/`outputType`/`dependsOnAgent`/`tone`; `directive` and
-  the specialty enum don't exist on the backend.
-- Frontend task: `{ id, agentId, objective, priority, status: "DRAFT" }` — manually assigned to
-  one agent by the user, no `steps[]`, no polling loop, `status` values don't match
-  `pending|working|done|error`.
-
-**Superseded plan (the API integration above has landed):** rework `AgentDialog`'s "Specialty" field into an
-"Agent" dropdown of full templates mirroring the backend's seeded agents (Researcher / Writer /
-Designer / Artist — same `role`, `inputType`, `outputType`, `dependsOnAgent`, `tone`), plus a
-"Create your own" option that unlocks all those fields for manual entry. Submit always
-`POST /api/agents`, after checking `GET /api/agents` for a name collision (skip re-posting a
-template that's already on the shared roster — the backend auto-suffixes colliding ids rather
-than erroring, which would otherwise create silent duplicates like `writer_2`).
-
-Landing that also requires the larger, not-yet-scoped rewiring: `AgentsView` should source from
-`GET /api/agents` instead of `localStorage`, and the task flow needs to drop "assign to one
-agent" in favor of the orchestrator model (submit raw `input`, poll `GET /api/tasks`, render
-`steps[]` as they fill in) — flag this file as stale once that lands and rewrite this section
-to describe what's actually wired up.
-
-When that task-flow rewiring happens, the task composer needs a file input too (see "File
-uploads" above): if a file is attached, submit `POST /api/tasks` as `multipart/form-data`
-(fields `input` + `file`) instead of JSON; render `task.file.name` on the task feed card when
-present (e.g. "📎 report.pdf"), and if `task.fileWarning` is present, show it as an inline
-warning on that card (e.g. "⚠ file not used — no agent in this chain accepts uploads") rather
-than pretending the attachment did something. The custom-agent form from `AgentDialog` should
-also grow an "Accepts file uploads" checkbox mapped to `acceptsFiles` — irrelevant for template
-agents since those mirror the backend seeds (`researcher` is the only one currently `true`).
+**Agent creation flow (current):** the "New agent" / `QuickCreateAgent` form has a Specialty
+dropdown (Research / Writing / Software development / Data analysis / Customer support /
+Project management / "Create your own…" for a free-text specialty), an "Advanced setup" section
+(input/output type, `dependsOnAgent`, style), an "Accept file uploads" checkbox (disabled
+whenever `dependsOnAgent` is set, matching the backend rule that only entry-point agents can
+receive a file), and a Gemini model slider (`ModelSlider`, see the model-tier note in Tech stack
+above for why all three positions currently resolve to the same model). Everything submits via
+`POST /api/agents`. Since there's no seeded starter roster anymore (see "Core concept" above),
+every agent — including a `writer → designer → artist`-style pipeline — has to be built through
+this form from a completely empty roster on first sign-in.
 
 ## Keeping this file accurate
 Update this file whenever the API contract or the file structure above actually changes — not

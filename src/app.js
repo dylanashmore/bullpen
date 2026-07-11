@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import agentsRouter from './routes/agents.js';
 import tasksRouter from './routes/tasks.js';
-import { seedDefaultAgents } from './agents/agentStore.js';
 
 const app = express();
 
@@ -32,7 +31,5 @@ app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });
-
-seedDefaultAgents();
 
 export default app;

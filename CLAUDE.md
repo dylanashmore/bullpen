@@ -13,12 +13,25 @@ against them concurrently. Everything else in this codebase can be refactored fr
 
 ## Tech stack
 - Backend: Node.js + Express, ES modules (`"type": "module"` in package.json)
-- LLM: Google Gemini API via `@google/genai` for specialist agent text generation, and for
-  orchestrator routing decisions via Gemini function calling
+- LLM: Google Gemini API via `@google/genai` for specialist agent text generation (per-agent
+  model, see `src/lib/models.js`), and for orchestrator routing decisions via Gemini function
+  calling (`ORCHESTRATOR_MODEL` in `src/lib/geminiClient.js`, not slider-controlled).
+  **`gemini-2.5-*` models (flash-lite/flash/pro) were pulled from new API keys 2026-07-09**,
+  confirmed live on this project's key (404 "no longer available to new users") — this is a
+  hard deprecation, not a billing/tier gate, so upgrading billing doesn't fix it.
+  `gemini-3.5-flash` is the only model verified working here; both `SUPPORTED_AGENT_MODELS` and
+  the frontend's `geminiModels` currently point all three picker tiers at it as a stopgap (known
+  cosmetic side effect: the slider always shows "Flash-Lite" on reload since it can't
+  distinguish identical ids). Give lite/pro their own distinct ids in both places once verified
+  live — don't reintroduce any `gemini-2.5-*` id without testing it against a real key first.
 - Images: Google Imagen API (`ai.models.generateImages`) for any agent whose `outputType` is
-  `"image"` — currently `imagen-4.0-generate-001`. Google has announced deprecation of
-  standalone Imagen models for 2026-08-17 in favor of `gemini-2.5-flash-image` ("Nano
-  Banana") — if that lands before the demo, swap the model id in `src/lib/imagenClient.js`.
+  `"image"` — currently `imagen-4.0-generate-001`. **Confirmed blocked on this key's free tier**
+  ("Imagen 3 is only available on paid plans") as of 2026-07-11; unverified whether the account's
+  new paid/pro billing setup resolves this — retest before relying on it for a demo. Google has
+  also announced deprecation of standalone Imagen models for 2026-08-17 in favor of
+  `gemini-2.5-flash-image` ("Nano Banana") — note that despite the "2.5" in its name this is an
+  image-output model, a separate deprecation track from the `gemini-2.5-flash` *text* models
+  above; don't assume it's affected by the same cutoff without checking.
 - Storage: in-memory only (array/Map in module scope) — no database. This is intentional for a
   12-hour build; do not introduce persistence unless asked.
 - No websockets — the frontend polls `GET /api/tasks` every ~2s for progress.
@@ -71,8 +84,9 @@ through `writer → designer → artist`, each step's output feeding the next.
   acceptsFiles }`, creates an agent. `name/role/inputType/outputType` required;
   `dependsOnAgent` must reference an existing agent id if provided; `acceptsFiles` optional
   boolean, defaults to `false`. `specialty`, `directive`, `model`, `style`, and `inspiredBy`
-  are optional; model is validated against the supported Gemini 2.5 text models. Tone, style,
-  and inspiration are included in the specialist system prompt.
+  are optional; `model` is validated against `SUPPORTED_AGENT_MODELS` (`src/lib/models.js`) —
+  currently just `gemini-3.5-flash`, see Tech stack above for why. Tone, style, and inspiration
+  are included in the specialist system prompt.
 - `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty }`; changes the
   agent's model or editable instructions without recreating it.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).

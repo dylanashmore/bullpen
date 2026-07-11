@@ -168,7 +168,7 @@ function HomePage({ authenticated, onSignIn, onGetStarted }) {
   );
 }
 
-function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack }) {
+function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack, onModeChange }) {
   const [mode, setMode] = useState(initialMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -205,6 +205,7 @@ function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack }) {
     setError("");
     setPassword("");
     setConfirmPassword("");
+    onModeChange?.(nextMode);
   }
 
   return (
@@ -668,15 +669,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [showIntro, setShowIntro] = useState(shouldShowIntro);
   const [authenticated, setAuthenticated] = useState(isDemoAuthenticated);
-  const [authMode, setAuthMode] = useState(null);
-  const [inWorkspace, setInWorkspace] = useState(false);
-  const [view, setView] = useState("agents");
+  const [route, setRoute] = useState(() => window.location.pathname.replace(/\/+$/, "") || "/");
   const [menuOpen, setMenuOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [taskTargetAgent, setTaskTargetAgent] = useState(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const hasWorkspaceContent = agents.length > 0 || tasks.length > 0;
+  const isWorkspaceRoute = route === "/app" || route === "/app/agents" || route === "/app/tasks";
+  const view = route === "/app/tasks" ? "tasks" : "agents";
 
   useEffect(() => {
     let cancelled = false;
@@ -705,16 +706,32 @@ export default function App() {
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
+  useEffect(() => {
+    function handlePopState() {
+      setRoute(window.location.pathname.replace(/\/+$/, "") || "/");
+      setMenuOpen(false);
+      setTaskDialogOpen(false);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   function notify(message) {
     setToast(message);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(""), 3200);
   }
 
-  function navigate(nextView) {
-    setView(nextView);
+  function navigatePath(path, { replace = false } = {}) {
+    if (replace) window.history.replaceState({}, "", path);
+    else if (window.location.pathname !== path) window.history.pushState({}, "", path);
+    setRoute(path);
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function navigate(nextView) {
+    navigatePath(`/app/${nextView}`);
   }
 
   async function createAgent(data) {
@@ -797,7 +814,7 @@ export default function App() {
     try {
       const created = await api.createTask(data);
       setTasks((current) => [created, ...current.filter((task) => task.id !== created.id)]);
-      if (!data.agentId) setView("tasks");
+      if (!data.agentId) navigate("tasks");
       const target = data.agentId ? agents.find((agent) => agent.id === data.agentId) : null;
       notify(target ? `Task sent to ${target.name}.` : "Task sent to the orchestrator.");
       return true;
@@ -833,8 +850,7 @@ export default function App() {
     if (!isAdmin && !isSavedAccount) return false;
     try { sessionStorage.setItem(AUTH_KEY, "true"); } catch { /* Session persistence is optional. */ }
     setAuthenticated(true);
-    setAuthMode(null);
-    setInWorkspace(true);
+    if (!isWorkspaceRoute) navigatePath("/app/agents");
     return true;
   }
 
@@ -845,44 +861,42 @@ export default function App() {
       sessionStorage.setItem(AUTH_KEY, "true");
     } catch { /* Session persistence is optional. */ }
     setAuthenticated(true);
-    setAuthMode(null);
-    setInWorkspace(true);
+    if (!isWorkspaceRoute) navigatePath("/app/agents");
   }
 
   function signOut() {
     try { sessionStorage.removeItem(AUTH_KEY); } catch { /* Session persistence is optional. */ }
     setAuthenticated(false);
-    setAuthMode(null);
-    setInWorkspace(false);
     setMenuOpen(false);
+    navigatePath("/");
   }
 
-  function enterBullpen(authFallbackMode) {
-    if (authenticated) {
-      setInWorkspace(true);
-      return;
-    }
-    setAuthMode(authFallbackMode);
+  function openBullpen(authFallbackRoute) {
+    navigatePath(authenticated ? "/app/agents" : authFallbackRoute);
   }
 
-  if (!inWorkspace) {
+  if (!isWorkspaceRoute) {
+    const authMode = route === "/signup" ? "signup" : route === "/login" ? "signin" : null;
     return (
       <>
-        {showIntro && <IntroSequence onComplete={completeIntro} />}
+        {showIntro && !authMode && <IntroSequence onComplete={completeIntro} />}
         {authMode
-          ? <AuthScreen initialMode={authMode} onLogin={login} onSignUp={signUp} onBack={() => setAuthMode(null)} />
-          : <HomePage authenticated={authenticated} onSignIn={() => enterBullpen("signin")} onGetStarted={() => enterBullpen("signup")} />}
+          ? <AuthScreen key={route} initialMode={authMode} onLogin={login} onSignUp={signUp} onBack={() => navigatePath("/")} onModeChange={(mode) => navigatePath(mode === "signin" ? "/login" : "/signup", { replace: true })} />
+          : <HomePage authenticated={authenticated} onSignIn={() => openBullpen("/login")} onGetStarted={() => openBullpen("/signup")} />}
       </>
     );
   }
 
-  if (loading && !showIntro) {
+  if (!authenticated) {
+    return <AuthScreen initialMode="signin" onLogin={login} onSignUp={signUp} onBack={() => navigatePath("/")} onModeChange={(mode) => navigatePath(mode === "signin" ? "/login" : "/signup")} />;
+  }
+
+  if (loading) {
     return <div className="backend-loading"><img src={logoUrl} alt="" /><span>Opening the Bullpen…</span></div>;
   }
 
   return (
     <>
-      {showIntro && <IntroSequence onComplete={completeIntro} />}
       <div className={`app-shell${hasWorkspaceContent ? " has-sidebar" : " sidebarless"}`}>
         {hasWorkspaceContent && <Sidebar currentView={view} tasks={tasks} open={menuOpen} connection={connection} onNavigate={navigate} onSignOut={signOut} />}
         {hasWorkspaceContent && menuOpen && <button className="sidebar-backdrop" type="button" onClick={() => setMenuOpen(false)} aria-label="Close navigation" />}

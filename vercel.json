@@ -8,5 +8,12 @@
     "api/**/*.js": {
       "maxDuration": 300
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/signup", "destination": "/index.html" },
+    { "source": "/app", "destination": "/index.html" },
+    { "source": "/app/agents", "destination": "/index.html" },
+    { "source": "/app/tasks", "destination": "/index.html" }
+  ]
 }

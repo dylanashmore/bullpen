@@ -99,7 +99,7 @@ function IntroSequence({ onComplete }) {
   return (
     <div className="intro-overlay" role="presentation">
       {stage === 0 && <div className="intro-stage intro-logo-stage"><img className="intro-logo" src={logoUrl} alt="Bullpen" /></div>}
-      {stage === 1 && <div className="intro-stage intro-tagline-stage"><p>the AI pitchers your business needs</p></div>}
+      {stage === 1 && <div className="intro-stage intro-tagline-stage"><p>the AI "pitchers" your business needs</p></div>}
       {stage === 2 && <div className="intro-stage intro-welcome-stage"><p>Welcome to the <span>Bullpen</span></p></div>}
       <button className="intro-skip" type="button" onClick={onComplete}>Skip intro</button>
     </div>

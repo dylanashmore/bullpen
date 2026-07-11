@@ -1,10 +1,13 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Modality } from '@google/genai';
 
-// Standalone Imagen models (imagen-4.0-*) are on Google's deprecation path
-// (shutdown announced for 2026-08-17) in favor of gemini-2.5-flash-image ("Nano
-// Banana"). They're still live as of this build — swap IMAGEN_MODEL if that
-// changes before the demo.
-const IMAGEN_MODEL = 'imagen-4.0-generate-001';
+// Switched from standalone Imagen (imagen-4.0-generate-001) to
+// gemini-2.5-flash-image ("Nano Banana") — verified live that this account's
+// Google AI plan can't call Imagen ("Imagen 3 is only available on paid
+// plans"), while this model has a free-tier daily quota. Also sidesteps
+// Imagen's own 2026-08-17 deprecation, since this was already its announced
+// replacement. Goes through the same generateContent path as every other
+// Gemini call in this codebase, just with image response modality enabled.
+const IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 let client = null;
 
@@ -22,20 +25,20 @@ function getClient() {
 // which is a plain string like any other step output.
 export async function generateImage(prompt) {
   try {
-    const response = await getClient().models.generateImages({
-      model: IMAGEN_MODEL,
-      prompt,
+    const response = await getClient().models.generateContent({
+      model: IMAGE_MODEL,
+      contents: prompt,
       config: {
-        numberOfImages: 1,
+        responseModalities: [Modality.TEXT, Modality.IMAGE],
       },
     });
 
-    const generated = response.generatedImages?.[0];
-    const imageBytes = generated?.image?.imageBytes;
-    if (!imageBytes) {
-      throw new Error('Imagen returned no image data');
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    const imagePart = parts.find((part) => part.inlineData?.data);
+    if (!imagePart) {
+      throw new Error('gemini-2.5-flash-image returned no image data');
     }
-    return `data:image/png;base64,${imageBytes}`;
+    return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
   } catch (err) {
     throw new Error(`generateImage failed: ${err.message}`);
   }

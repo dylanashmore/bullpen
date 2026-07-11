@@ -1,7 +1,11 @@
 import { GoogleGenAI, FunctionCallingConfigMode, createUserContent, createPartFromUri } from '@google/genai';
 
-const AGENT_MODEL = 'gemini-2.5-flash';
-const ORCHESTRATOR_MODEL = 'gemini-2.5-flash';
+// gemini-2.5-flash was pulled from new API keys 2026-07-09 (ahead of its official
+// 2026-10-16 shutdown). gemini-3.5-flash is the current stable replacement, no
+// shutdown announced yet — but watch ai.google.dev/gemini-api/docs/deprecations.
+const AGENT_MODEL = 'gemini-3.5-flash';
+const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
+const ENRICHMENT_MODEL = 'gemini-3.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;
@@ -69,6 +73,30 @@ export async function runAgentPrompt(agent, inputText, file) {
     return text;
   } catch (err) {
     throw new Error(`runAgentPrompt failed for agent "${agent.id}": ${err.message}`);
+  }
+}
+
+// One-time call made at agent creation only — never call this per task.
+// Returns the model's raw trimmed text: either a 2-3 sentence practical
+// summary, or the literal string "NONE" for an unrecognized reference.
+export async function runStyleEnrichmentPrompt(rawInput) {
+  try {
+    const response = await getClient().models.generateContent({
+      model: ENRICHMENT_MODEL,
+      contents: `The user described a style/reference as: "${rawInput}". If this is a real, recognizable style, artist, framework, or example, summarize in 2-3 sentences how an AI agent should apply it. If this is not a real or recognizable reference, respond with exactly: NONE`,
+      config: {
+        systemInstruction:
+          'You are a precise classifier and summarizer. Respond with either a 2-3 sentence practical summary, ' +
+          'or exactly the word NONE — no extra commentary, no markdown, no surrounding quotes.',
+      },
+    });
+    const text = response.text;
+    if (!text) {
+      throw new Error('Gemini returned an empty response');
+    }
+    return text.trim();
+  } catch (err) {
+    throw new Error(`runStyleEnrichmentPrompt failed: ${err.message}`);
   }
 }
 

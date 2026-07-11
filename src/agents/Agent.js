@@ -11,6 +11,7 @@ export class Agent {
     tone = null,
     status = 'idle',
     acceptsFiles = false,
+    styleReference = null,
   }) {
     if (!VALID_OUTPUT_TYPES.has(outputType)) {
       throw new Error(`Invalid outputType "${outputType}". Must be one of: ${[...VALID_OUTPUT_TYPES].join(', ')}`);
@@ -24,6 +25,7 @@ export class Agent {
     this.tone = tone;
     this.status = status;
     this.acceptsFiles = acceptsFiles;
+    this.styleReference = styleReference;
   }
 
   buildSystemPrompt() {
@@ -35,6 +37,9 @@ export class Agent {
       lines.push(`Tone: ${this.tone}.`);
     }
     lines.push(`You receive input of type "${this.inputType}" and must produce output of type "${this.outputType}".`);
+    if (this.styleReference) {
+      lines.push(`Apply this style/approach: ${this.styleReference}`);
+    }
     lines.push('Respond with only the requested output itself — no preamble, no meta-commentary about what you are doing.');
     return lines.join('\n');
   }
@@ -72,6 +77,7 @@ export class Agent {
       tone: this.tone,
       status: this.status,
       acceptsFiles: this.acceptsFiles,
+      styleReference: this.styleReference,
     };
   }
 }

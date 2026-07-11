@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { addAgent, getAgentById, getAllAgents } from '../agents/agentStore.js';
+import { enrichStyleReference } from '../lib/enrichStyle.js';
 
 const router = Router();
 
@@ -10,7 +11,7 @@ router.get('/', (req, res) => {
   res.json(getAllAgents().map((agent) => agent.toJSON()));
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const body = req.body ?? {};
   const missing = REQUIRED_FIELDS.filter((field) => !body[field] || typeof body[field] !== 'string');
   if (missing.length > 0) {
@@ -29,6 +30,15 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'acceptsFiles must be a boolean' });
   }
 
+  if (body.styleReference !== undefined && body.styleReference !== null && typeof body.styleReference !== 'string') {
+    return res.status(400).json({ error: 'styleReference must be a string' });
+  }
+
+  // Enrichment is fail-safe by design (enrichStyleReference never throws) —
+  // any failure or unrecognized input just resolves to null, same as if the
+  // field had been left blank. Never blocks agent creation.
+  const styleReference = await enrichStyleReference(body.styleReference);
+
   try {
     const agent = addAgent({
       name: body.name,
@@ -38,6 +48,7 @@ router.post('/', (req, res) => {
       dependsOnAgent: body.dependsOnAgent ?? null,
       tone: body.tone ?? null,
       acceptsFiles: body.acceptsFiles ?? false,
+      styleReference,
     });
     res.status(201).json(agent.toJSON());
   } catch (err) {

@@ -109,6 +109,32 @@ async function main() {
   const fileDone = await pollUntilSettled(fileRes.body.id);
   console.log('  final:', summarizeTask(fileDone));
 
+  console.log('\n6) POST /api/agents with a real, recognizable styleReference (expect it enriched, not raw/NONE/null)');
+  const styledRes = await request('POST', '/api/agents', {
+    name: 'Illustrator',
+    role: 'Produces visual design briefs for the artist agent to render.',
+    inputType: 'agent_output',
+    outputType: 'text',
+    styleReference: 'Studio Ghibli',
+  });
+  console.log('  status:', styledRes.status, '- styleReference:', styledRes.body.styleReference);
+  if (styledRes.status !== 201 || !styledRes.body.styleReference || styledRes.body.styleReference === 'NONE') {
+    console.warn('  WARNING: expected a non-null, non-"NONE" enriched styleReference');
+  }
+
+  console.log('\n7) POST /api/agents with nonsense styleReference (expect graceful fallback to null)');
+  const nonsenseRes = await request('POST', '/api/agents', {
+    name: 'Gibberish Agent',
+    role: 'Just here to test the fallback path.',
+    inputType: 'topic',
+    outputType: 'text',
+    styleReference: 'asdkjfh qpwoeiruq. z9x8c7v6, blorp the florp',
+  });
+  console.log('  status:', nonsenseRes.status, '- styleReference:', nonsenseRes.body.styleReference);
+  if (nonsenseRes.status !== 201 || nonsenseRes.body.styleReference !== null) {
+    console.warn('  WARNING: expected styleReference to fall back to null for nonsense input');
+  }
+
   console.log('\nDone.');
 }
 

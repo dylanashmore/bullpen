@@ -26,12 +26,26 @@ function uniqueId(candidate) {
 
 // explicitId lets seeding assign stable, readable ids (e.g. "writer") that
 // dependsOnAgent references and function-call routing rely on.
+// styleReference here is the already-resolved final value (an enriched
+// summary or null) — enrichment of raw user input happens in the route layer
+// before this is called, keeping this function a plain synchronous data write.
 export function addAgent(
-  { name, role, inputType, outputType, dependsOnAgent = null, tone = null, acceptsFiles = false },
+  { name, role, inputType, outputType, dependsOnAgent = null, tone = null, acceptsFiles = false, styleReference = null },
   explicitId
 ) {
   const id = uniqueId(explicitId || slugify(name));
-  const agent = new Agent({ id, name, role, inputType, outputType, dependsOnAgent, tone, status: 'idle', acceptsFiles });
+  const agent = new Agent({
+    id,
+    name,
+    role,
+    inputType,
+    outputType,
+    dependsOnAgent,
+    tone,
+    status: 'idle',
+    acceptsFiles,
+    styleReference,
+  });
   agents.set(id, agent);
   return agent;
 }

@@ -440,6 +440,14 @@
 .task-step.cancelled summary span:last-child { color: var(--bullpen-red-bright); }
 .task-output-text { max-height: 260px; overflow: auto; padding: 0 11px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .task-output-image { display: block; width: min(100%, 560px); margin: 0 11px 12px; border-radius: 8px; }
+.step-feedback-toggle { display: block; margin: 0 11px 12px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
+.step-feedback-toggle:hover { text-decoration: underline; }
+.step-feedback-form, .step-feedback-suggestion { margin: 0 11px 12px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 14, 11, 0.45); }
+.step-feedback-form textarea { width: 100%; min-height: 52px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: rgba(3, 10, 8, 0.72); padding: 8px; font-size: 11px; line-height: 1.45; outline: 0; resize: vertical; }
+.step-feedback-form textarea::placeholder { color: #52675f; }
+.step-feedback-form textarea:focus { border-color: var(--accent); }
+.step-feedback-suggestion span { display: block; margin-bottom: 6px; color: var(--subtle); font-size: 7px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.step-feedback-suggestion p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .task-progress { height: 2px; margin: 16px -22px -20px; overflow: hidden; background: var(--line); }
 .task-progress span { display: block; width: 38%; height: 100%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: task-loading 1.5s ease-in-out infinite; }
 @keyframes task-loading { from { transform: translateX(-110%); } to { transform: translateX(300%); } }

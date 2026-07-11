@@ -124,6 +124,22 @@ that looked like it (e.g. summarizing "the reviews at this Google link") was the
 plausible-sounding text from training data, not genuinely reading the page. Image agents don't
 get this — Imagen's `generateImages` call has no `tools` support.
 
+**Reliability fixes (added 2026-07-11, found via stress-testing after merging web access):**
+- Phase 1 hit a real `finishReason: MAX_TOKENS` failure in testing — the model wrote out several
+  alternative drafts ("Option A... Option B...") instead of one, got cut off mid-JSON, and the
+  step errored on the malformed result. Fixed by having the phase 1 instruction explicitly ask
+  for exactly one version of the work, not multiple options to choose between, plus raising
+  `PHASE_OUTPUT_TOKEN_LIMIT` 8192 → 16384 as headroom. **Do not add `thinkingConfig: {
+  thinkingBudget: 0 }` here** — it was tried first as a "belt and suspenders" measure against
+  this same bug, but A/B testing (10 runs with thinking left at its default vs 5 with it forced
+  to 0, same previously-failing prompt) showed the prompt fix alone was already 100% sufficient.
+  Disabling thinking blanket-wide would silently undercut the Pro tier's whole reason for
+  existing (extended reasoning) for no measured benefit, so it was reverted.
+- Every `generateContentWithRetry()`-wrapped call (all four `generateContent` call sites in
+  `geminiClient.js`) now retries up to twice on a transient Gemini 503 ("high demand, try again
+  later") with backoff — hit repeatedly in testing, unrelated to request content. Non-transient
+  errors (bad key, invalid request) still fail immediately, no retry.
+
 ## Locked API contract
 - `GET /api/agents` → array of agent objects (`Agent.toJSON()` shape: `id, name, role,
   inputType, outputType, dependsOnAgent, tone, status, acceptsFiles, specialty, directive,

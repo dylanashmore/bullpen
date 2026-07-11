@@ -43,7 +43,7 @@ function summarizeTask(task) {
   return `[${task.status}] ${task.input} -> ${steps || '(no steps yet)'}`;
 }
 
-async function pollUntilSettled(taskId, { timeoutMs = 60000, intervalMs = 2000 } = {}) {
+async function pollUntilSettled(taskId, { timeoutMs = 90000, intervalMs = 2000 } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const { body: tasks } = await request('GET', '/api/tasks');
@@ -132,7 +132,10 @@ async function main() {
     agentId: 'artist',
   });
   console.log('  status:', pipelineRes.status, '- created task:', pipelineRes.body.id);
-  const pipelineDone = await pollUntilSettled(pipelineRes.body.id, { timeoutMs: 90000 });
+  // Phased execution (added 2026-07-11) roughly doubles Gemini calls for the
+  // two text steps (writer, designer) in this chain, so this needs more room
+  // than a single-call step would.
+  const pipelineDone = await pollUntilSettled(pipelineRes.body.id, { timeoutMs: 180000 });
   console.log('  final:', summarizeTask(pipelineDone));
 
   console.log('\n5) POST /api/tasks — multipart with a file attached, targeted at "researcher" (which accepts files)');

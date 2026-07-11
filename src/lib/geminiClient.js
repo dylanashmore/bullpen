@@ -23,6 +23,30 @@ function getClient() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const TRANSIENT_ERROR_MAX_RETRIES = 2;
+const TRANSIENT_ERROR_RETRY_DELAY_MS = 1500;
+
+// Google's 503 "high demand, try again later" is common enough under real
+// traffic that a task failing outright on one is worse than a short retry —
+// seen repeatedly in testing (2026-07-11), unrelated to request content.
+function isTransientError(err) {
+  return /"code":\s*503|UNAVAILABLE|high demand/i.test(String(err?.message || err));
+}
+
+async function generateContentWithRetry(request) {
+  let lastErr;
+  for (let attempt = 0; attempt <= TRANSIENT_ERROR_MAX_RETRIES; attempt += 1) {
+    try {
+      return await getClient().models.generateContent(request);
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= TRANSIENT_ERROR_MAX_RETRIES || !isTransientError(err)) throw err;
+      await sleep(TRANSIENT_ERROR_RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
 // Uploads a file to the Gemini Files API and waits for it to leave the
 // PROCESSING state so it's safe to reference in a generateContent call.
 async function uploadFileAndWaitUntilActive({ buffer, mimeType, name }) {
@@ -71,7 +95,7 @@ const PHASE_RESPONSE_SCHEMA = {
   required: ['phase', 'content'],
 };
 
-const PHASE_OUTPUT_TOKEN_LIMIT = 8192;
+const PHASE_OUTPUT_TOKEN_LIMIT = 16384;
 
 // Runs one phase of a multi-phase agent execution, asking Gemini to both do
 // the phase's work AND self-report a short task-specific label for what it
@@ -83,7 +107,9 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
   try {
     const phaseInstruction = phaseNumber === 1
       ? `This is phase ${phaseNumber} of ${totalPhases} of this task — do the natural first part of the work only ` +
-        `(e.g. gathering, researching, or drafting raw material), not the final polished answer.\n\nTask input:\n${input}`
+        `(e.g. gathering, researching, or drafting raw material), not the final polished answer. Produce exactly ` +
+        `ONE version of this phase's work, not multiple alternative drafts/options to choose between, and keep ` +
+        `it as concise as the task allows.\n\nTask input:\n${input}`
       : `This is the final phase (${phaseNumber} of ${totalPhases}) of this task. Using your own prior-phase work ` +
         `below, complete the task and produce the finished answer to hand back.\n\nOriginal task input:\n${input}` +
         `\n\nYour previous-phase work:\n${previousContent}`;
@@ -106,7 +132,7 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
       '"content" field is where the "respond with only the requested output itself" rule above applies: it must ' +
       'contain your actual output for this phase and nothing about the JSON structure, schema, or formatting.';
 
-    const response = await getClient().models.generateContent({
+    const response = await generateContentWithRetry({
       model: agent.model || DEFAULT_AGENT_MODEL,
       contents,
       config: {
@@ -148,7 +174,7 @@ export async function optimizeText(text, kind) {
       'preamble, no quotes, no commentary.';
 
   try {
-    const response = await getClient().models.generateContent({
+    const response = await generateContentWithRetry({
       model: DEFAULT_AGENT_MODEL,
       contents: `${instructions}\n\nOriginal:\n${text}`,
     });
@@ -170,7 +196,7 @@ export async function optimizeText(text, kind) {
 // caller needs to tell "nothing durable" apart from "the call broke."
 export async function suggestContextFromFeedback(agent, { feedback, taskInput, stepOutput }) {
   try {
-    const response = await getClient().models.generateContent({
+    const response = await generateContentWithRetry({
       model: CONTEXT_SUGGESTION_MODEL,
       contents:
         `Agent role: ${agent.role}\n` +
@@ -207,7 +233,7 @@ export async function askOrchestrator(taskInput, agents) {
     throw new Error('No agents are registered to route this task to');
   }
   try {
-    const response = await getClient().models.generateContent({
+    const response = await generateContentWithRetry({
       model: ORCHESTRATOR_MODEL,
       contents: `Route the following user task to the specialist agent(s) that should handle it by calling their function(s). Task: "${taskInput}"`,
       config: {

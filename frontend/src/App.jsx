@@ -68,6 +68,10 @@ function MenuIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
 }
 
+function TrashIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16ZM10 11v6M14 11v6" /></svg>;
+}
+
 function shouldShowIntro() {
   try {
     return sessionStorage.getItem(INTRO_KEY) !== "true";
@@ -883,7 +887,7 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete })
         <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
         <div className="task-card-head-actions">
           <span className={`task-status ${status}`}>{status}</span>
-          {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task">🗑</button>}
+          {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task"><TrashIcon /></button>}
         </div>
       </div>
       {task.fileWarning && <div className="task-warning">{task.fileWarning}</div>}
@@ -925,7 +929,7 @@ function TaskListRow({ task, agents, onOpen, onDelete }) {
         </span>
         <span className={`task-status ${status}`}>{status}</span>
       </button>
-      <button className="icon-button task-row-delete" type="button" onClick={() => onDelete(task)} aria-label="Delete task">🗑</button>
+      <button className="icon-button task-row-delete" type="button" onClick={() => onDelete(task)} aria-label="Delete task"><TrashIcon /></button>
     </div>
   );
 }

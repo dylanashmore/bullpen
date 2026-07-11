@@ -35,15 +35,14 @@ const outputTypes = [
 ];
 
 // gemini-2.5-* models were pulled from new API keys 2026-07-09 — confirmed
-// live, they 404 regardless of billing tier. gemini-3.5-flash is the only
-// model verified working so far, so all three tiers point at it for now;
-// known cosmetic side effect: the slider always shows "Flash-Lite" on reload
-// since it can't distinguish identical ids (see src/lib/models.js on backend).
-// Give lite/pro their own verified ids here once confirmed live.
+// live, they 404 regardless of billing tier. Verified 2026-07-11 against a
+// live key: gemini-flash-lite-latest, gemini-3.5-flash, and gemini-pro-latest
+// each work for generateContent, so each tier now has its own distinct id
+// (see src/lib/models.js on backend, which validates against the same ids).
 const geminiModels = [
-  { id: "gemini-3.5-flash", label: "Flash-Lite", hint: "Fast" },
+  { id: "gemini-flash-lite-latest", label: "Flash-Lite", hint: "Fast" },
   { id: "gemini-3.5-flash", label: "Flash", hint: "Balanced" },
-  { id: "gemini-3.5-flash", label: "Pro", hint: "Deep" },
+  { id: "gemini-pro-latest", label: "Pro", hint: "Deep" },
 ];
 
 const DEFAULT_MODEL = "gemini-3.5-flash";

@@ -18,12 +18,13 @@ against them concurrently. Everything else in this codebase can be refactored fr
   calling (`ORCHESTRATOR_MODEL` in `src/lib/geminiClient.js`, not slider-controlled).
   **`gemini-2.5-*` models (flash-lite/flash/pro) were pulled from new API keys 2026-07-09**,
   confirmed live on this project's key (404 "no longer available to new users") — this is a
-  hard deprecation, not a billing/tier gate, so upgrading billing doesn't fix it.
-  `gemini-3.5-flash` is the only model verified working here; both `SUPPORTED_AGENT_MODELS` and
-  the frontend's `geminiModels` currently point all three picker tiers at it as a stopgap (known
-  cosmetic side effect: the slider always shows "Flash-Lite" on reload since it can't
-  distinguish identical ids). Give lite/pro their own distinct ids in both places once verified
-  live — don't reintroduce any `gemini-2.5-*` id without testing it against a real key first.
+  hard deprecation, not a billing/tier gate, so upgrading billing doesn't fix it. As of
+  2026-07-11, the picker's three tiers map to three distinct, individually-verified ids:
+  `gemini-flash-lite-latest` (Flash-Lite), `gemini-3.5-flash` (Flash, also the backend default
+  and orchestrator routing model), `gemini-pro-latest` (Pro) — set in both
+  `SUPPORTED_AGENT_MODELS` (`src/lib/models.js`) and the frontend's `geminiModels`
+  (`frontend/src/App.jsx`). Don't reintroduce any `gemini-2.5-*` id without testing it against a
+  real key first.
 - Images: Google Imagen API (`ai.models.generateImages`) for any agent whose `outputType` is
   `"image"` — currently `imagen-4.0-generate-001`. **Confirmed blocked on this key's free tier**
   ("Imagen 3 is only available on paid plans") as of 2026-07-11; unverified whether the account's
@@ -32,8 +33,18 @@ against them concurrently. Everything else in this codebase can be refactored fr
   `gemini-2.5-flash-image` ("Nano Banana") — note that despite the "2.5" in its name this is an
   image-output model, a separate deprecation track from the `gemini-2.5-flash` *text* models
   above; don't assume it's affected by the same cutoff without checking.
-- Storage: in-memory only (array/Map in module scope) — no database. This is intentional for a
-  12-hour build; do not introduce persistence unless asked.
+- Storage: `src/lib/persistence.js` holds a Redis client (`@upstash/redis`, REST-based — works
+  over plain HTTP, so it's fine in serverless/edge) built from `KV_REST_API_URL`/`KV_REST_API_TOKEN`
+  (Vercel KV naming) or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (direct Upstash
+  Marketplace naming) — whichever pair is present. **Added 2026-07-11** to fix agents/tasks
+  vanishing under Vercel: the old plain in-memory Map/array was scoped to a single serverless
+  instance, and concurrent requests could land on a different instance with an empty store,
+  flashing the UI back to the empty-roster screen. When neither env var pair is set (e.g. local
+  dev with no database linked), both stores fall back to the original in-memory Map/array — no
+  database is required to develop locally. `getAgentById`/`getTaskById` under Redis mode return a
+  freshly deserialized copy each call, not a live reference, so every mutation site (see
+  `orchestrator.js`, `routes/agents.js`, `routes/tasks.js`) explicitly writes back via
+  `saveAgent`/`saveTask` after changing a field — mutating the object alone does not persist it.
 - No websockets — the frontend polls `GET /api/tasks` every ~2s for progress.
 
 ## Core concept: agents as objects
@@ -119,14 +130,20 @@ example used in tests and docs below — just note it no longer exists until som
 src/
   agents/
     Agent.js          — Agent class: buildSystemPrompt, toFunctionDeclaration, toJSON
-    agentStore.js      — in-memory agent registry (addAgent, getAllAgents, getAgentById,
-                         removeAgent). No seeding — starts empty on every boot.
+    agentStore.js      — agent registry (addAgent, getAllAgents, getAgentById, removeAgent,
+                         saveAgent — write-back after mutating a fetched agent), Redis-backed
+                         via persistence.js with an in-memory fallback. No seeding — starts
+                         empty on every boot.
   lib/
     models.js          — supported per-agent Gemini model ids and default model
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
                          the Gemini Files API), askOrchestrator() (routing via function calling)
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
-    taskStore.js       — in-memory task feed (createTask, getAllTasks, getTaskById)
+    persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
+                         or null if neither is set; agentStore/taskStore both branch on this
+    taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
+                         after mutating a fetched task), Redis-backed via persistence.js with an
+                         in-memory fallback
   orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents)
@@ -139,11 +156,16 @@ src/
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
 api/
   [...path].js          — Vercel serverless entrypoint, re-exports the same Express app from
-                         src/app.js. **Known issue, not yet resolved:** in-memory Agent/Task
-                         state is not safe under serverless — cold starts can reset it and
-                         POST /api/tasks's fire-and-forget runChain() may not finish executing
-                         after the response is sent. Treat the live Vercel deploy as unreliable
-                         for anything beyond a UI preview until this is addressed.
+                         src/app.js. Agent/Task state now persists via Redis (see Storage above)
+                         as long as `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or the Upstash-named
+                         equivalents) are set in the Vercel project — without them this falls
+                         back to the old per-instance in-memory store and the original
+                         multi-instance flakiness returns. **Still-open risk:** POST
+                         /api/tasks's fire-and-forget `runChain()` call continues after the
+                         response is sent — a function instance recycled mid-execution can still
+                         leave a task stuck `working` forever, since there's no re-entry/resume
+                         mechanism. Not observed in testing (maxDuration is 300s) but not
+                         structurally ruled out either.
 scripts/
   test-requests.js      — `npm run test:api`, exercises agent creation, single-agent task,
                          and full media pipeline against a running local server
@@ -154,6 +176,11 @@ frontend/                — see "Frontend" section below
 - `GEMINI_API_KEY` required (`.env`, see `.env.example`). Server logs a warning on boot if
   missing rather than crashing, so `GET /api/agents` etc. still work without a key.
 - `PORT` optional, defaults to 3000.
+- `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`)
+  optional — enables persistent, cross-instance agent/task storage (see Storage above). Vercel
+  sets these automatically once an Upstash Redis database is connected to the project (Vercel
+  dashboard → project → Storage → Create Database → Upstash for Redis → Connect). Not needed for
+  local dev; without them the server falls back to in-memory storage.
 
 ## File uploads
 A task can optionally carry one file attachment (PDF, image, text, etc. — whatever the Gemini

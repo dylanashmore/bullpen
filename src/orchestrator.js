@@ -1,14 +1,27 @@
-import { getAllAgents, getAgentById } from './agents/agentStore.js';
+import { getAllAgents, getAgentById, saveAgent } from './agents/agentStore.js';
+import { getTaskById, saveTask } from './lib/taskStore.js';
 import { askOrchestrator, runAgentPrompt } from './lib/geminiClient.js';
 import { generateImage } from './lib/imagenClient.js';
+
+// Under a persistent store, `task` here and the object POST /api/tasks/:id/cancel
+// fetches are two separate deserialized copies of the same record — so
+// cancellation can't be read off the local `task` object. Re-fetch the
+// canonical flag from the store instead.
+async function isCancelled(taskId) {
+  const fresh = await getTaskById(taskId);
+  return Boolean(fresh?.cancelRequested);
+}
 
 // Asks Gemini which agent(s) a task needs, then expands that set to include
 // any upstream agents implied by dependsOnAgent chains (e.g. the model calls
 // only "artist", but artist depends on designer which depends on writer —
 // both get pulled in automatically so the pipeline actually has inputs).
-export async function pickChainForTask(input, agents = getAllAgents()) {
-  const calls = await askOrchestrator(input, agents);
-  const calledIds = [...new Set(calls.map((c) => c.name))].filter((id) => getAgentById(id));
+export async function pickChainForTask(input, agents = null) {
+  const resolvedAgents = agents ?? (await getAllAgents());
+  const calls = await askOrchestrator(input, resolvedAgents);
+  const uniqueNames = [...new Set(calls.map((c) => c.name))];
+  const existing = await Promise.all(uniqueNames.map(async (id) => ((await getAgentById(id)) ? id : null)));
+  const calledIds = existing.filter(Boolean);
 
   if (calledIds.length === 0) {
     throw new Error('Orchestrator did not select any agent for this task');
@@ -19,24 +32,30 @@ export async function pickChainForTask(input, agents = getAllAgents()) {
 
 // Builds a dependency-complete chain from one or more explicit agent ids.
 // This is also used when the frontend assigns a task directly to one worker.
-export function resolveAgentChain(agentIds) {
-  const chainIds = new Set();
-  const addWithAncestors = (id) => {
-    if (chainIds.has(id)) return;
-    const agent = getAgentById(id);
+export async function resolveAgentChain(agentIds) {
+  const chainIds = [];
+  const seen = new Set();
+  async function addWithAncestors(id) {
+    if (seen.has(id)) return;
+    const agent = await getAgentById(id);
     if (!agent) return;
-    if (agent.dependsOnAgent) addWithAncestors(agent.dependsOnAgent);
-    chainIds.add(id);
-  };
-  agentIds.forEach(addWithAncestors);
+    if (agent.dependsOnAgent) await addWithAncestors(agent.dependsOnAgent);
+    seen.add(id);
+    chainIds.push(id);
+  }
+  for (const id of agentIds) {
+    await addWithAncestors(id);
+  }
 
-  return [...chainIds].map((id) => getAgentById(id));
+  const resolved = await Promise.all(chainIds.map((id) => getAgentById(id)));
+  return resolved.filter(Boolean);
 }
 
 // Executes a task's agent chain, mutating `task` in place as steps progress
-// so GET /api/tasks reflects live status. Agents with no unmet dependency run
-// together via Promise.all (parallel); dependents wait for their upstream
-// agent's output before becoming "ready".
+// and writing back to the store after every transition so GET /api/tasks
+// (and a concurrent cancel request) see live status. Agents with no unmet
+// dependency run together via Promise.all (parallel); dependents wait for
+// their upstream agent's output before becoming "ready".
 //
 // fileBuffer is the raw bytes of an optional task attachment (task.file holds
 // its {name, mimeType}). It's only ever handed to root agents (no
@@ -45,19 +64,21 @@ export function resolveAgentChain(agentIds) {
 // existed. The buffer lives only for this call and is never persisted.
 export async function runChain(task, fileBuffer, assignedAgentId = null) {
   task.status = 'working';
+  await saveTask(task);
 
   let chainAgents;
   try {
     chainAgents = assignedAgentId
-      ? resolveAgentChain([assignedAgentId])
+      ? await resolveAgentChain([assignedAgentId])
       : await pickChainForTask(task.input);
   } catch (err) {
     task.status = 'error';
     task.error = err.message;
+    await saveTask(task);
     return;
   }
 
-  if (task.cancelRequested) return;
+  if (await isCancelled(task.id)) return;
 
   if (fileBuffer && task.file) {
     const canUseFile = chainAgents.some((agent) => !agent.dependsOnAgent && agent.acceptsFiles);
@@ -67,22 +88,28 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
   }
 
   task.steps = chainAgents.map((agent) => ({ agentId: agent.id, status: 'pending', output: null }));
+  await saveTask(task);
+
   const byId = new Map(chainAgents.map((agent) => [agent.id, agent]));
   const outputs = new Map();
   const remaining = new Set(chainAgents.map((agent) => agent.id));
 
-  const cancelRemaining = () => {
-    remaining.forEach((id) => {
+  const cancelRemaining = async () => {
+    for (const id of remaining) {
       const step = task.steps.find((item) => item.agentId === id);
       if (step && step.status !== 'done' && step.status !== 'error') step.status = 'cancelled';
       const agent = byId.get(id);
-      if (agent) agent.status = 'idle';
-    });
+      if (agent) {
+        agent.status = 'idle';
+        await saveAgent(agent);
+      }
+    }
+    await saveTask(task);
   };
 
   while (remaining.size > 0) {
-    if (task.cancelRequested) {
-      cancelRemaining();
+    if (await isCancelled(task.id)) {
+      await cancelRemaining();
       return;
     }
     const readyIds = [...remaining].filter((id) => {
@@ -93,6 +120,7 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
     if (readyIds.length === 0) {
       task.status = 'error';
       task.error = 'Dependency cycle detected while resolving agent chain';
+      await saveTask(task);
       return;
     }
 
@@ -100,13 +128,15 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
       readyIds.map(async (id) => {
         const agent = byId.get(id);
         const step = task.steps.find((s) => s.agentId === id);
-        if (task.cancelRequested) {
+        if (await isCancelled(task.id)) {
           step.status = 'cancelled';
           remaining.delete(id);
           return;
         }
         step.status = 'working';
         agent.status = 'working';
+        await saveTask(task);
+        await saveAgent(agent);
         try {
           const stepInput = agent.dependsOnAgent ? outputs.get(agent.dependsOnAgent) : task.input;
           const stepFile = !agent.dependsOnAgent && agent.acceptsFiles && fileBuffer && task.file
@@ -115,7 +145,7 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
           const output = agent.outputType === 'image'
             ? await generateImage(stepInput)
             : await runAgentPrompt(agent, stepInput, stepFile);
-          if (task.cancelRequested) {
+          if (await isCancelled(task.id)) {
             step.status = 'cancelled';
             return;
           }
@@ -123,7 +153,7 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
           step.output = output;
           step.status = 'done';
         } catch (err) {
-          if (task.cancelRequested) {
+          if (await isCancelled(task.id)) {
             step.status = 'cancelled';
           } else {
             step.status = 'error';
@@ -134,16 +164,21 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
         } finally {
           agent.status = 'idle';
           remaining.delete(id);
+          await saveTask(task);
+          await saveAgent(agent);
         }
       })
     );
 
-    if (task.cancelRequested) {
-      cancelRemaining();
+    if (await isCancelled(task.id)) {
+      await cancelRemaining();
       return;
     }
     if (task.status === 'error') return;
   }
 
-  if (!task.cancelRequested) task.status = 'done';
+  if (!(await isCancelled(task.id))) {
+    task.status = 'done';
+    await saveTask(task);
+  }
 }

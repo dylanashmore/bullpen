@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { addAgent, getAgentById, getAllAgents, removeAgent } from '../agents/agentStore.js';
+import { addAgent, getAgentById, getAllAgents, removeAgent, saveAgent } from '../agents/agentStore.js';
 import { DEFAULT_AGENT_MODEL, isSupportedAgentModel, SUPPORTED_AGENT_MODELS } from '../lib/models.js';
 
 const router = Router();
@@ -7,11 +7,16 @@ const router = Router();
 const VALID_OUTPUT_TYPES = ['text', 'image', 'structured', 'feedback'];
 const REQUIRED_FIELDS = ['name', 'role', 'inputType', 'outputType'];
 
-router.get('/', (req, res) => {
-  res.json(getAllAgents().map((agent) => agent.toJSON()));
+router.get('/', async (req, res) => {
+  try {
+    const agents = await getAllAgents();
+    res.json(agents.map((agent) => agent.toJSON()));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load agents', detail: err.message });
+  }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const body = req.body ?? {};
   const missing = REQUIRED_FIELDS.filter((field) => !body[field] || typeof body[field] !== 'string');
   if (missing.length > 0) {
@@ -20,10 +25,6 @@ router.post('/', (req, res) => {
 
   if (!VALID_OUTPUT_TYPES.includes(body.outputType)) {
     return res.status(400).json({ error: `outputType must be one of: ${VALID_OUTPUT_TYPES.join(', ')}` });
-  }
-
-  if (body.dependsOnAgent && !getAgentById(body.dependsOnAgent)) {
-    return res.status(400).json({ error: `dependsOnAgent "${body.dependsOnAgent}" does not match an existing agent id` });
   }
 
   if (body.acceptsFiles !== undefined && typeof body.acceptsFiles !== 'boolean') {
@@ -35,7 +36,11 @@ router.post('/', (req, res) => {
   }
 
   try {
-    const agent = addAgent({
+    if (body.dependsOnAgent && !(await getAgentById(body.dependsOnAgent))) {
+      return res.status(400).json({ error: `dependsOnAgent "${body.dependsOnAgent}" does not match an existing agent id` });
+    }
+
+    const agent = await addAgent({
       name: body.name,
       role: body.role,
       inputType: body.inputType,
@@ -55,46 +60,58 @@ router.post('/', (req, res) => {
   }
 });
 
-router.patch('/:id', (req, res) => {
-  const agent = getAgentById(req.params.id);
-  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+router.patch('/:id', async (req, res) => {
+  try {
+    const agent = await getAgentById(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-  const body = req.body ?? {};
-  let changed = false;
+    const body = req.body ?? {};
+    let changed = false;
 
-  if (body.model !== undefined) {
-    if (!isSupportedAgentModel(body.model)) {
-      return res.status(400).json({ error: `model must be one of: ${SUPPORTED_AGENT_MODELS.join(', ')}` });
+    if (body.model !== undefined) {
+      if (!isSupportedAgentModel(body.model)) {
+        return res.status(400).json({ error: `model must be one of: ${SUPPORTED_AGENT_MODELS.join(', ')}` });
+      }
+      agent.model = body.model;
+      changed = true;
     }
-    agent.model = body.model;
-    changed = true;
-  }
 
-  if (body.directive !== undefined) {
-    if (typeof body.directive !== 'string' || !body.directive.trim()) {
-      return res.status(400).json({ error: 'directive must be a non-empty string' });
+    if (body.directive !== undefined) {
+      if (typeof body.directive !== 'string' || !body.directive.trim()) {
+        return res.status(400).json({ error: 'directive must be a non-empty string' });
+      }
+      agent.directive = body.directive.trim();
+      agent.role = body.directive.trim();
+      changed = true;
     }
-    agent.directive = body.directive.trim();
-    agent.role = body.directive.trim();
-    changed = true;
-  }
 
-  if (body.specialty !== undefined) {
-    if (typeof body.specialty !== 'string' || !body.specialty.trim()) {
-      return res.status(400).json({ error: 'specialty must be a non-empty string' });
+    if (body.specialty !== undefined) {
+      if (typeof body.specialty !== 'string' || !body.specialty.trim()) {
+        return res.status(400).json({ error: 'specialty must be a non-empty string' });
+      }
+      agent.specialty = body.specialty.trim();
+      changed = true;
     }
-    agent.specialty = body.specialty.trim();
-    changed = true;
-  }
 
-  if (!changed) return res.status(400).json({ error: 'Provide model, directive, or specialty to update' });
-  res.json(agent.toJSON());
+    if (!changed) return res.status(400).json({ error: 'Provide model, directive, or specialty to update' });
+
+    await saveAgent(agent);
+    res.json(agent.toJSON());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update agent', detail: err.message });
+  }
 });
 
-router.delete('/:id', (req, res) => {
-  if (!getAgentById(req.params.id)) return res.status(404).json({ error: 'Agent not found' });
+router.delete('/:id', async (req, res) => {
+  let agent;
   try {
-    removeAgent(req.params.id);
+    agent = await getAgentById(req.params.id);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to look up agent', detail: err.message });
+  }
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  try {
+    await removeAgent(req.params.id);
     res.status(204).end();
   } catch (err) {
     res.status(409).json({ error: err.message });

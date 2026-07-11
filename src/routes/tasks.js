@@ -3,6 +3,7 @@ import multer from 'multer';
 import { createTask, getAllTasks, getTaskById, saveTask } from '../lib/taskStore.js';
 import { runChain } from '../orchestrator.js';
 import { getAgentById, saveAgent } from '../agents/agentStore.js';
+import { draftAgentForGap } from '../lib/geminiClient.js';
 
 const router = Router();
 
@@ -44,6 +45,23 @@ router.post('/:id/cancel', async (req, res) => {
     res.json(task);
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel task', detail: err.message });
+  }
+});
+
+// Suggestion-only: never creates anything. The frontend shows the draft for
+// review/editing and, if the user confirms, creates it via the normal
+// POST /api/agents path itself.
+router.post('/:id/draft-agent', async (req, res) => {
+  try {
+    const task = await getTaskById(req.params.id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task.status !== 'needs_agent') {
+      return res.status(400).json({ error: 'This task is not waiting on a new agent' });
+    }
+    const draft = await draftAgentForGap({ reason: task.gapReason, taskInput: task.input });
+    res.json({ draft });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to draft an agent', detail: err.message });
   }
 });
 

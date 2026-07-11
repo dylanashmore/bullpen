@@ -232,7 +232,7 @@ function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack, onModeC
 
 function Sidebar({ currentView, tasks, open, connection, onNavigate, onSignOut }) {
   const recentTasks = tasks.slice(0, 7);
-  const taskStatusLabels = { pending: "Queued", working: "In progress", done: "Completed", error: "Error", cancelled: "Stopped" };
+  const taskStatusLabels = { pending: "Queued", working: "In progress", done: "Completed", error: "Error", cancelled: "Stopped", needs_agent: "Needs an agent" };
   const connectionCopy = !connection.online
     ? { title: "Service unavailable", detail: IS_LOCAL_DEV ? "Start the server on port 3000" : "Please try again shortly", state: "offline" }
     : connection.geminiConfigured
@@ -732,14 +732,22 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
   );
 }
 
-function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
+const TASK_STATUS_LABELS = { pending: "pending", working: "working", done: "done", error: "error", cancelled: "cancelled", needs_agent: "needs an agent" };
+
+function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDraftAgent }) {
   const status = task.status || "pending";
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
     <article className={`task-card ${status}`}>
-      <div className="task-card-head"><div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div><span className={`task-status ${status}`}>{status}</span></div>
+      <div className="task-card-head"><div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div><span className={`task-status ${status}`}>{TASK_STATUS_LABELS[status] || status}</span></div>
       {task.fileWarning && <div className="task-warning">{task.fileWarning}</div>}
       {task.error && <div className="task-error">{task.error}</div>}
+      {status === "needs_agent" && (
+        <div className="task-warning">
+          <p>No existing agent is a good fit for this: {task.gapReason}</p>
+          <button className="button primary" type="button" onClick={() => onDraftAgent(task)}>Create an agent for this</button>
+        </div>
+      )}
       {task.steps?.length > 0 && (
         <div className="task-steps">
           {task.steps.map((step) => {
@@ -759,7 +767,7 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
   );
 }
 
-function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onApplyContext }) {
+function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onApplyContext, onDraftAgent }) {
   return (
     <>
       <div className="page-heading">
@@ -768,7 +776,7 @@ function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onA
       </div>
       {!connection.geminiConfigured && <div className="api-key-banner"><strong>Gemini API key needed</strong><span>Add <code>GEMINI_API_KEY</code> to the root <code>.env</code> file and restart the backend to run tasks.</span></div>}
       <div className="task-list">
-        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} key={task.id} />)}
+        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} onDraftAgent={onDraftAgent} key={task.id} />)}
       </div>
     </>
   );
@@ -783,7 +791,7 @@ function useDialog(open, dialogRef) {
   }, [open, dialogRef]);
 }
 
-function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
+function TaskDialog({ open, canRun, targetAgent, initialInput = "", onClose, onCreate }) {
   const dialogRef = useRef(null);
   const [input, setInput] = useState("");
   const [file, setFile] = useState(null);
@@ -792,10 +800,10 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
 
   useEffect(() => {
     if (!open) return;
-    setInput("");
+    setInput(initialInput);
     setFile(null);
     setSubmitting(false);
-  }, [open]);
+  }, [open, initialInput]);
 
   async function submit(event) {
     event.preventDefault();
@@ -819,6 +827,91 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
   );
 }
 
+// Shown when a task lands in "needs_agent" status. Drafts a candidate agent
+// via Gemini on open (suggestion-only, nothing persisted yet), presents it as
+// an editable form, and only creates the agent through the normal
+// POST /api/agents path if the user explicitly submits.
+function AgentDraftDialog({ open, task, onClose, onDraft, onCreate }) {
+  const dialogRef = useRef(null);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useDialog(open, dialogRef);
+
+  useEffect(() => {
+    if (!open || !task) return;
+    let cancelled = false;
+    setForm(null);
+    setFailed(false);
+    setLoading(true);
+    onDraft(task.id).then((draft) => {
+      if (cancelled) return;
+      setLoading(false);
+      if (!draft) {
+        setFailed(true);
+        return;
+      }
+      setForm({
+        name: draft.name || "",
+        specialty: draft.specialty || "",
+        directive: draft.role || "",
+        inputType: draft.inputType || "topic",
+        outputType: outputTypes.some((item) => item.value === draft.outputType) ? draft.outputType : "text",
+        tone: draft.tone || "",
+      });
+    });
+    return () => { cancelled = true; };
+  }, [open, task]);
+
+  function field(key) {
+    return { value: form?.[key] ?? "", onChange: (event) => setForm((current) => ({ ...current, [key]: event.target.value })) };
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!form) return;
+    setSaving(true);
+    const created = await onCreate({
+      name: form.name.trim(),
+      specialty: form.specialty.trim(),
+      directive: form.directive.trim(),
+      inputType: form.inputType.trim(),
+      outputType: form.outputType,
+      dependsOnAgent: null,
+      acceptsFiles: false,
+      tone: form.tone.trim() || null,
+      style: null,
+      inspiredBy: null,
+      context: null,
+    });
+    setSaving(false);
+    if (created) onClose(true);
+  }
+
+  return (
+    <dialog className="modal" ref={dialogRef} onClose={() => onClose(false)} onCancel={() => onClose(false)}>
+      <div className="modal-heading"><div><span className="eyebrow">Fill the gap</span><h2>Create an agent for this</h2></div><button className="icon-button modal-close" type="button" onClick={() => onClose(false)} aria-label="Close dialog">×</button></div>
+      {task?.gapReason && <p className="modal-helper">Gemini couldn't find a good fit: {task.gapReason}</p>}
+      {loading && <p className="modal-helper">Drafting a specialist for this…</p>}
+      {failed && <p className="task-warning">Couldn't draft a suggestion — try creating an agent manually from the Agents page instead.</p>}
+      {form && (
+        <form onSubmit={submit}>
+          <label className="quick-field"><span>Name</span><input {...field("name")} required maxLength="32" /></label>
+          <label className="quick-field"><span>Specialty</span><input {...field("specialty")} required maxLength="48" /></label>
+          <label className="quick-field"><span>How should this agent work?</span><textarea {...field("directive")} required maxLength="240" rows="3" /></label>
+          <label className="quick-field"><span>Input type</span><input {...field("inputType")} required maxLength="48" /></label>
+          <label className="quick-field"><span>Output type</span>
+            <select {...field("outputType")}>{outputTypes.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select>
+          </label>
+          <label className="quick-field"><span>Tone</span><input {...field("tone")} maxLength="80" placeholder="e.g. Confident and concise" /></label>
+          <footer className="modal-actions"><button className="button secondary" type="button" onClick={() => onClose(false)}>Cancel</button><button className="button primary" type="submit" disabled={saving}>{saving ? "Creating…" : "Create agent"}</button></footer>
+        </form>
+      )}
+    </dialog>
+  );
+}
+
 function Toast({ message }) {
   return <div className={`toast${message ? " show" : ""}`} role="status" aria-live="polite">{message}</div>;
 }
@@ -834,6 +927,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [taskTargetAgent, setTaskTargetAgent] = useState(null);
+  const [taskRetryInput, setTaskRetryInput] = useState("");
+  const [draftDialogTask, setDraftDialogTask] = useState(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const hasWorkspaceContent = agents.length > 0 || tasks.length > 0;
@@ -995,13 +1090,33 @@ export default function App() {
     }
   }
 
-  function openTaskDialog(targetAgent = null) {
+  function openTaskDialog(targetAgent = null, retryInput = "") {
     if (!connection.online) {
       notify(IS_LOCAL_DEV ? "Start the Bullpen backend before running a task." : "The Bullpen service is temporarily unavailable.");
       return;
     }
     setTaskTargetAgent(targetAgent);
+    setTaskRetryInput(retryInput);
     setTaskDialogOpen(true);
+  }
+
+  async function draftAgentForTask(taskId) {
+    try {
+      const { draft } = await api.draftAgentForTask(taskId);
+      return draft;
+    } catch (error) {
+      notify(error.message);
+      return null;
+    }
+  }
+
+  // Closing the draft dialog after a successful creation immediately reopens
+  // the task composer prefilled with the original input, so the user can
+  // retry now that a fitting agent exists — no need to retype anything.
+  function closeAgentDraft(created) {
+    const retryInput = draftDialogTask?.input || "";
+    setDraftDialogTask(null);
+    if (created) openTaskDialog(null, retryInput);
   }
 
   async function createTask(data) {
@@ -1103,10 +1218,11 @@ export default function App() {
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
               ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
-              : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />}
+              : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onDraftAgent={setDraftDialogTask} />}
           </section>
         </main>
-        <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); }} onCreate={createTask} />
+        <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} initialInput={taskRetryInput} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); setTaskRetryInput(""); }} onCreate={createTask} />
+        <AgentDraftDialog open={Boolean(draftDialogTask)} task={draftDialogTask} onDraft={draftAgentForTask} onCreate={createAgent} onClose={closeAgentDraft} />
         <Toast message={toast} />
       </div>
     </>

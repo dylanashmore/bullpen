@@ -3,6 +3,17 @@ import { getTaskById, saveTask } from './lib/taskStore.js';
 import { askOrchestrator, runAgentPrompt } from './lib/geminiClient.js';
 import { generateImage } from './lib/imagenClient.js';
 
+// Thrown when the orchestrator's no_suitable_agent escape hatch fires —
+// distinct from a generic routing failure so runChain can pause the task in
+// "needs_agent" status (with the reason attached) instead of erroring it out.
+export class NoSuitableAgentError extends Error {
+  constructor(reason) {
+    super(reason || 'No existing agent is a good fit for this task.');
+    this.name = 'NoSuitableAgentError';
+    this.reason = this.message;
+  }
+}
+
 // Under a persistent store, `task` here and the object POST /api/tasks/:id/cancel
 // fetches are two separate deserialized copies of the same record — so
 // cancellation can't be read off the local `task` object. Re-fetch the
@@ -19,6 +30,12 @@ async function isCancelled(taskId) {
 export async function pickChainForTask(input, agents = null) {
   const resolvedAgents = agents ?? (await getAllAgents());
   const calls = await askOrchestrator(input, resolvedAgents);
+
+  const noFitCall = calls.find((c) => c.name === 'no_suitable_agent');
+  if (noFitCall) {
+    throw new NoSuitableAgentError(noFitCall.args?.reason);
+  }
+
   const uniqueNames = [...new Set(calls.map((c) => c.name))];
   const existing = await Promise.all(uniqueNames.map(async (id) => ((await getAgentById(id)) ? id : null)));
   const calledIds = existing.filter(Boolean);
@@ -72,8 +89,13 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
       ? await resolveAgentChain([assignedAgentId])
       : await pickChainForTask(task.input);
   } catch (err) {
-    task.status = 'error';
-    task.error = err.message;
+    if (err instanceof NoSuitableAgentError) {
+      task.status = 'needs_agent';
+      task.gapReason = err.reason;
+    } else {
+      task.status = 'error';
+      task.error = err.message;
+    }
     await saveTask(task);
     return;
   }

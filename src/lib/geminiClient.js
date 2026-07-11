@@ -5,6 +5,26 @@ import { DEFAULT_AGENT_MODEL } from './models.js';
 // see the comment in src/lib/models.js on why this is gemini-3.5-flash now.
 const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
 const CONTEXT_SUGGESTION_MODEL = 'gemini-3.5-flash';
+const AGENT_DRAFT_MODEL = 'gemini-3.5-flash';
+
+// Escape hatch offered to the orchestrator alongside real agent functions —
+// lets it admit nothing fits instead of being forced into a poor match.
+const NO_SUITABLE_AGENT_FUNCTION = {
+  name: 'no_suitable_agent',
+  description:
+    'Call this INSTEAD of any other function if none of the available specialist agents are ' +
+    'actually a good fit for this task. Do not force a poor match just to call something.',
+  parametersJsonSchema: {
+    type: 'object',
+    properties: {
+      reason: {
+        type: 'string',
+        description: 'Brief explanation of what kind of specialist is needed that does not exist in the current roster.',
+      },
+    },
+    required: ['reason'],
+  },
+};
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;
@@ -113,6 +133,49 @@ export async function suggestContextFromFeedback(agent, { feedback, taskInput, s
   }
 }
 
+// One-time, opt-in call triggered by a user reviewing a task stuck in
+// "needs_agent" status — never runs automatically. Drafts a full candidate
+// agent to fill the gap the orchestrator identified; the caller shows it as
+// an editable preview and only creates the agent (via the normal
+// POST /api/agents path) if the user explicitly confirms.
+export async function draftAgentForGap({ reason, taskInput }) {
+  try {
+    const response = await getClient().models.generateContent({
+      model: AGENT_DRAFT_MODEL,
+      contents:
+        `A task needs a specialist agent that doesn't exist yet in the roster.\n` +
+        `Task: "${taskInput}"\n` +
+        `Why no existing agent fits: ${reason}\n\n` +
+        'Draft one new specialist agent that would fill this gap.',
+      config: {
+        systemInstruction:
+          'You design specialist AI agents for a multi-agent task system. Given a task and a gap in the ' +
+          'current roster, draft one new agent that would fill it. Keep the role concise and actionable.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Short job-title-like name, e.g. "Copywriter" or "Data Analyst".' },
+            role: { type: 'string', description: 'One to two sentence description of what this agent does.' },
+            specialty: { type: 'string', description: 'Short category label, e.g. "Writing" or "Data analysis".' },
+            inputType: { type: 'string', description: 'What kind of input this agent expects, e.g. "topic" or "agent_output".' },
+            outputType: { type: 'string', enum: ['text', 'image', 'structured', 'feedback'] },
+            tone: { type: 'string', description: 'Optional working style/tone, e.g. "concise and analytical".' },
+          },
+          required: ['name', 'role', 'specialty', 'inputType', 'outputType'],
+        },
+      },
+    });
+    const text = response.text;
+    if (!text) {
+      throw new Error('Gemini returned an empty response');
+    }
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`draftAgentForGap failed: ${err.message}`);
+  }
+}
+
 // Asks Gemini to route a task to one or more agents via function calling.
 // Returns the raw functionCalls array: [{ name, args: { input } }, ...]
 export async function askOrchestrator(taskInput, agents) {
@@ -129,11 +192,12 @@ export async function askOrchestrator(taskInput, agents) {
           'for every agent needed to fully complete it. If the task needs a multi-step pipeline (e.g. writing ' +
           'copy before producing a design brief before generating an image), call all of the agents involved — ' +
           'the caller will resolve their execution order from each agent\'s declared dependency. Only call agents ' +
-          'that are actually needed.',
+          'that are actually needed. If none of the available agents are a reasonable fit for this task, call ' +
+          'no_suitable_agent instead of forcing a poor match.',
         toolConfig: {
           functionCallingConfig: { mode: FunctionCallingConfigMode.ANY },
         },
-        tools: [{ functionDeclarations: agents.map((a) => a.toFunctionDeclaration()) }],
+        tools: [{ functionDeclarations: [...agents.map((a) => a.toFunctionDeclaration()), NO_SUITABLE_AGENT_FUNCTION] }],
       },
     });
     return response.functionCalls ?? [];

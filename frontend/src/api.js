@@ -75,6 +75,9 @@ export const api = {
   deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  // Drafts a candidate agent for a task stuck in "needs_agent" status —
+  // does not create anything; pair with createAgent to confirm it.
+  draftAgentForTask: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/draft-agent`, { method: "POST" }),
   createTask: ({ input, file, agentId = null }) => {
     if (file) {
       const body = new FormData();

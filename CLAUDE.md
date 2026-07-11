@@ -78,11 +78,16 @@ example used in tests and docs below — just note it no longer exists until som
 ## Orchestrator routing (function calling, not keyword matching)
 `src/orchestrator.js`:
 - `pickChainForTask(input)` sends the task input to Gemini with one function declaration per
-  agent (`Agent.toFunctionDeclaration()`), forcing at least one function call
-  (`FunctionCallingConfigMode.ANY`). It reads back `response.functionCalls`, then **expands the
-  called agent set to include every ancestor implied by `dependsOnAgent`** — so if the model
-  only calls `artist`, `designer` and `writer` get pulled in automatically since the pipeline
-  needs their output.
+  agent (`Agent.toFunctionDeclaration()`) **plus a synthetic `no_suitable_agent` escape hatch**
+  (declared in `geminiClient.js`), forcing at least one function call
+  (`FunctionCallingConfigMode.ANY`) — so the model is never left with zero valid options, but
+  it also isn't forced into a poor match: if nothing in the roster actually fits, it calls
+  `no_suitable_agent` with a `reason` instead. That call is detected and thrown as a
+  `NoSuitableAgentError` (carries `.reason`), which `runChain` catches specially — see "Filling
+  roster gaps" below — rather than treating it like a normal routing failure. Otherwise it reads
+  back `response.functionCalls` and **expands the called agent set to include every ancestor
+  implied by `dependsOnAgent`** — so if the model only calls `artist`, `designer` and `writer`
+  get pulled in automatically since the pipeline needs their output.
 - `runChain(task)` executes the resolved chain against a mutable `task` object (steps update
   in place as they progress, which is what `GET /api/tasks` reflects on each poll). Execution
   is level-based: any agent whose dependency is already satisfied (or has none) is "ready"; all
@@ -124,10 +129,13 @@ example used in tests and docs below — just note it no longer exists until som
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
-  createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output }`, step status one of
-  `pending|working|done|error`. `file` is `{ name, mimeType } | null` — metadata only, set when
-  the task was created with an attachment. `fileWarning` is only present (a string) when a file
-  was attached but no agent in the resolved chain could use it — see "File uploads" below.
+  createdAt, file, fileWarning?, gapReason? }`. Task `status` is one of
+  `pending|working|done|error|cancelled|needs_agent`; each step: `{ agentId, status, output }`,
+  step status one of `pending|working|done|error|cancelled`. `file` is `{ name, mimeType } |
+  null` — metadata only, set when the task was created with an attachment. `fileWarning` is
+  only present (a string) when a file was attached but no agent in the resolved chain could use
+  it — see "File uploads" below. `gapReason` is only present (a string) when `status ===
+  "needs_agent"` — see "Filling roster gaps" below.
 - `POST /api/tasks` → creates and kicks off a task, returns it **immediately** with empty
   `steps` and `status: "pending"`. Execution (routing + running each agent) continues
   asynchronously; the frontend polls `GET /api/tasks` to watch `steps` fill in and `status`
@@ -142,6 +150,12 @@ example used in tests and docs below — just note it no longer exists until som
 - `POST /api/tasks/:id/cancel` → cooperatively cancels a pending/working task, marks unfinished
   steps `cancelled`, and returns involved agents to `idle`. An in-flight provider request cannot
   be forcibly terminated, but its eventual result is discarded and cannot revive the task.
+- `POST /api/tasks/:id/draft-agent` → 400 unless the task is in `needs_agent` status.
+  **Suggestion-only — never creates anything.** One Gemini call (`draftAgentForGap` in
+  `geminiClient.js`, structured JSON output) drafts a full candidate agent from `task.gapReason`
+  + `task.input`; returns `{ draft: { name, role, specialty, inputType, outputType, tone } }`.
+  The caller reviews/edits the draft and creates it themselves via the normal `POST
+  /api/agents` if they want it — see "Filling roster gaps" below.
 
 ## File structure
 ```
@@ -155,23 +169,31 @@ src/
   lib/
     models.js          — supported per-agent Gemini model ids and default model
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
-                         the Gemini Files API), askOrchestrator() (routing via function calling),
+                         the Gemini Files API), askOrchestrator() (routing via function calling,
+                         offers a no_suitable_agent escape hatch alongside real agents),
                          suggestContextFromFeedback() (drafts a context update from step
-                         feedback, or null if nothing durable — never called automatically)
+                         feedback, or null if nothing durable), draftAgentForGap() (drafts a
+                         candidate agent for a roster gap, structured JSON output) — none of
+                         the draft/suggestion calls are ever invoked automatically
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
                          or null if neither is set; agentStore/taskStore both branch on this
     taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
                          after mutating a fetched task), Redis-backed via persistence.js with an
                          in-memory fallback
-  orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
+  orchestrator.js      — pickChainForTask() (routing + dependency expansion, throws
+                         NoSuitableAgentError when the model calls no_suitable_agent), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
-                         an optional file buffer to accepting root agents)
+                         an optional file buffer to accepting root agents; catches
+                         NoSuitableAgentError and parks the task in needs_agent status instead
+                         of erroring it)
   routes/
     agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation; POST /:id/feedback
                          drafts a context suggestion from feedback without persisting it
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
-                         an optional multipart file upload alongside the JSON path
+                         an optional multipart file upload alongside the JSON path; POST
+                         /:id/cancel; POST /:id/draft-agent drafts a candidate agent for a task
+                         stuck in needs_agent status without creating anything
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
@@ -227,6 +249,28 @@ Files API accepts), routed to whichever agent(s) in the resolved chain can use i
 - One file per task, no multi-file support. 20MB upload limit (`multer` `limits.fileSize` in
   `routes/tasks.js`) — separate from and tighter than the Gemini Files API's own 2GB/50MB(PDF)
   limits, just a sane hackathon-scale cap.
+
+## Filling roster gaps
+A task with no `agentId` (orchestrator-routed, not assigned directly) can land in
+`needs_agent` status instead of running or erroring, when Gemini decides nothing in the current
+roster is actually a good fit:
+- The routing call always offers a `no_suitable_agent` function alongside the real agents (see
+  "Orchestrator routing" above). Calling it is a deliberate admission, not a fallback for a
+  flaky response — the model has to articulate *why* nothing fits via the required `reason`
+  argument, which becomes `task.gapReason` and later feeds the draft prompt.
+- **Only applies to auto-routed tasks.** A task submitted with an explicit `agentId` skips
+  `askOrchestrator` entirely (see `POST /api/tasks` in the contract above), so there's no
+  "nothing fits" ambiguity to resolve — the user already picked.
+- Once stuck, `POST /api/tasks/:id/draft-agent` (see API contract above) drafts a full candidate
+  agent — never auto-created. The frontend shows the draft in an editable dialog
+  (`AgentDraftDialog` in `App.jsx`); creating it goes through the completely ordinary `POST
+  /api/agents` path, same as manually filling out the "New agent" form. On success, the dialog
+  closes and immediately reopens the task composer prefilled with the original stuck task's
+  input (`TaskDialog`'s new `initialInput` prop) so the user can retry without retyping —
+  submitting that creates a **new** task; the original `needs_agent` one is left as history, not
+  mutated in place.
+- Same "preview, never silent" pattern as the style/feedback features above: nothing gets
+  created or persisted until the user explicitly confirms.
 
 ## Frontend
 Built by a teammate in `frontend/` — React 19 + Vite 8, plain CSS (no framework), ES modules.

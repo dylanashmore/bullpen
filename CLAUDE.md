@@ -140,6 +140,15 @@ get this — Imagen's `generateImages` call has no `tools` support.
 - `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty, context }`;
   changes the agent's model or editable instructions without recreating it. `context` accepts
   a string or `null` to clear it.
+- `POST /api/agents/:id/feedback` → body `{ feedback, taskInput?, stepOutput? }`, `feedback`
+  required non-empty string. **Suggestion-only — never writes to the agent.** One Gemini call
+  (`suggestContextFromFeedback` in `geminiClient.js`) drafts an updated `context` incorporating
+  any durable, reusable information in the feedback (facts, corrections, preferences); returns
+  `{ suggestedContext: string | null }`, `null` when the feedback had nothing durable to keep
+  (pure praise/complaint). The caller reviews the draft and applies it themselves via the
+  existing `PATCH /:id` (`{ context: suggestedContext }`) — this endpoint never persists
+  anything on its own, since `context` is shared by everyone using that agent and a bad
+  auto-merge would degrade it for the whole team, not just the person who gave the feedback.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
@@ -182,7 +191,9 @@ src/
   lib/
     models.js          — supported per-agent Gemini model ids and default model
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
-                         the Gemini Files API), askOrchestrator() (routing via function calling)
+                         the Gemini Files API), askOrchestrator() (routing via function calling),
+                         suggestContextFromFeedback() (drafts a context update from step
+                         feedback, or null if nothing durable — never called automatically)
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
                          or null if neither is set; agentStore/taskStore both branch on this
@@ -193,7 +204,8 @@ src/
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents)
   routes/
-    agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation
+    agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation; POST /:id/feedback
+                         drafts a context suggestion from feedback without persisting it
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
                          an optional multipart file upload alongside the JSON path
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):

@@ -1,4 +1,7 @@
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const OFFLINE_MESSAGE = import.meta.env.DEV
+  ? "Cannot reach the Bullpen backend. Start it with npm run dev."
+  : "The Bullpen service is temporarily unavailable. Please try again shortly.";
 
 export class ApiError extends Error {
   constructor(message, status = 0, payload = null) {
@@ -14,7 +17,7 @@ async function request(path, options = {}) {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, options);
   } catch {
-    throw new ApiError("Cannot reach the Bullpen backend. Start it with npm run dev.");
+    throw new ApiError(OFFLINE_MESSAGE);
   }
 
   const text = await response.text();
@@ -34,7 +37,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  health: () => request("/health"),
+  health: () => request("/api/health"),
   getAgents: () => request("/api/agents"),
   createAgent: (agent) => request("/api/agents", {
     method: "POST",

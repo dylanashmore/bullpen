@@ -6,6 +6,7 @@ const INTRO_KEY = "bullpen-intro-seen-v4";
 const AUTH_KEY = "bullpen-demo-authenticated";
 const DEMO_ACCOUNT_KEY = "bullpen-demo-account";
 const POLL_INTERVAL_MS = 2000;
+const IS_LOCAL_DEV = import.meta.env.DEV;
 
 const specialties = [
   "Research",
@@ -233,7 +234,7 @@ function Sidebar({ currentView, tasks, open, connection, onNavigate, onSignOut }
   const recentTasks = tasks.slice(0, 7);
   const taskStatusLabels = { pending: "Queued", working: "In progress", done: "Completed", error: "Error", cancelled: "Stopped" };
   const connectionCopy = !connection.online
-    ? { title: "Backend offline", detail: "Start the server on port 3000", state: "offline" }
+    ? { title: "Service unavailable", detail: IS_LOCAL_DEV ? "Start the server on port 3000" : "Please try again shortly", state: "offline" }
     : connection.geminiConfigured
       ? { title: "Gemini connected", detail: "Agents are ready to work", state: "ready" }
       : { title: "Backend connected", detail: "Add GEMINI_API_KEY to run tasks", state: "waiting" };
@@ -438,7 +439,7 @@ function EmptyAgents({ onCreate, connection }) {
       <span className="eyebrow">Welcome to Bullpen</span>
       <h1>Build your first AI agent</h1>
       <p>Give your agent a name, choose its specialty, and describe the job. That is all you need to get started.</p>
-      {!connection.online && <div className="connection-alert">Start the backend with <code>npm run dev</code> before adding an agent.</div>}
+      {!connection.online && <div className="connection-alert">{IS_LOCAL_DEV ? <>Start the backend with <code>npm run dev</code> before adding an agent.</> : <>Bullpen's agent service is temporarily unavailable. Please try again shortly.</>}</div>}
       <QuickCreateAgent onCreate={onCreate} disabled={!connection.online} />
       <div className="empty-footnote"><span className="gemini-glyph" aria-hidden="true">✦</span>{connection.geminiConfigured ? "Gemini is ready" : "Add your Gemini API key to run agent tasks"}</div>
     </div>
@@ -781,7 +782,7 @@ export default function App() {
 
   function openTaskDialog(targetAgent = null) {
     if (!connection.online) {
-      notify("Start the Bullpen backend before running a task.");
+      notify(IS_LOCAL_DEV ? "Start the Bullpen backend before running a task." : "The Bullpen service is temporarily unavailable.");
       return;
     }
     setTaskTargetAgent(targetAgent);

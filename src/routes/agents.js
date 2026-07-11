@@ -53,6 +53,7 @@ router.post('/', async (req, res) => {
       model: body.model ?? DEFAULT_AGENT_MODEL,
       style: body.style ?? null,
       inspiredBy: body.inspiredBy ?? null,
+      context: body.context ?? null,
     });
     res.status(201).json(agent.toJSON());
   } catch (err) {
@@ -186,6 +187,13 @@ router.patch('/:id', async (req, res) => {
         }
       }
       agent.dependsOnAgent = nextDependsOnAgent;
+      changed = true;
+    }
+
+    if (body.context !== undefined) {
+      const context = requireOptionalString('context', 'context');
+      if (context === undefined) return;
+      agent.context = context;
       changed = true;
     }
 

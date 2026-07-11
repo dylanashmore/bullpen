@@ -341,6 +341,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
   const [specialty, setSpecialty] = useState(specialties[0]);
   const [customSpecialty, setCustomSpecialty] = useState("");
   const [directive, setDirective] = useState("");
+  const [context, setContext] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [inputType, setInputType] = useState("topic");
   const [customInputType, setCustomInputType] = useState("");
@@ -362,6 +363,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
       name: name.trim(),
       specialty: resolvedSpecialty,
       directive: directive.trim(),
+      context: context.trim() || null,
       model,
       inputType: resolvedInputType,
       outputType,
@@ -377,6 +379,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
     setSpecialty(specialties[0]);
     setCustomSpecialty("");
     setDirective("");
+    setContext("");
     setModel(DEFAULT_MODEL);
     setInputType("topic");
     setCustomInputType("");
@@ -406,6 +409,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
         </label>
       )}
       <label className="quick-field"><span>How should this agent work?</span><textarea value={directive} onChange={(event) => setDirective(event.target.value)} required maxLength="240" rows="2" placeholder="Describe its instructions, expertise, and working style." /></label>
+      <label className="quick-field"><span>Context <small>Optional</small></span><textarea value={context} onChange={(event) => setContext(event.target.value)} maxLength="500" rows="2" placeholder="Background this agent should know — company info, prior facts, constraints. Separate from how it should work." /></label>
       <details className="advanced-agent-settings">
         <summary><span>Advanced setup</span><small>Inputs, outputs, dependencies, and style</small></summary>
         <div className="advanced-settings-grid">
@@ -450,6 +454,7 @@ function AgentInstructions({ agent, onUpdate }) {
   const [directive, setDirective] = useState(agent.directive || agent.role || "");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
   const savedDirective = agent.directive || agent.role || "";
   const changed = directive.trim() !== savedDirective.trim();
 
@@ -464,15 +469,22 @@ function AgentInstructions({ agent, onUpdate }) {
   }
 
   return (
-    <div className="agent-instructions">
-      <div className="agent-instructions-head"><span>Instructions</span>{!editing && <button type="button" onClick={() => setEditing(true)}>Edit</button>}</div>
-      {editing ? (
-        <>
-          <textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows="3" maxLength="500" aria-label={`Instructions for ${agent.name}`} autoFocus />
-          <div className="agent-instructions-actions"><button type="button" onClick={() => { setDirective(savedDirective); setEditing(false); }}>Cancel</button><button className="save" type="button" onClick={save} disabled={!changed || !directive.trim() || saving}>{saving ? "Saving…" : "Save instructions"}</button></div>
-        </>
-      ) : <p>{savedDirective}</p>}
-    </div>
+    <details className="agent-instructions" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary><span>Instructions</span>{!open && <small>{savedDirective}</small>}</summary>
+      <div className="agent-instructions-body">
+        {editing ? (
+          <>
+            <textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows="3" maxLength="500" aria-label={`Instructions for ${agent.name}`} autoFocus />
+            <div className="agent-instructions-actions"><button type="button" onClick={() => { setDirective(savedDirective); setEditing(false); }}>Cancel</button><button className="save" type="button" onClick={save} disabled={!changed || !directive.trim() || saving}>{saving ? "Saving…" : "Save instructions"}</button></div>
+          </>
+        ) : (
+          <>
+            <p>{savedDirective}</p>
+            <button type="button" onClick={() => setEditing(true)}>Edit</button>
+          </>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -562,6 +574,7 @@ function AgentSetupSummary({ agent, agents, dependencyName, onUpdate }) {
     ["Tone", agent.tone || "Default"],
     ["Style", agent.style || "Default"],
     ["Inspired by", agent.inspiredBy || "None"],
+    ["Context", agent.context || "None"],
   ];
   return (
     <details className="agent-setup-summary">
@@ -830,6 +843,7 @@ export default function App() {
         model: data.model,
         style: data.style,
         inspiredBy: data.inspiredBy,
+        context: data.context,
       });
       setAgents((current) => [...current, created]);
       notify(`${data.name} joined your Bullpen.`);

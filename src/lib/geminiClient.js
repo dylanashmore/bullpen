@@ -4,6 +4,7 @@ import { DEFAULT_AGENT_MODEL } from './models.js';
 // Not slider-controlled (unlike per-agent calls, which use agent.model) —
 // see the comment in src/lib/models.js on why this is gemini-3.5-flash now.
 const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
+const CONTEXT_SUGGESTION_MODEL = 'gemini-3.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;
@@ -71,6 +72,44 @@ export async function runAgentPrompt(agent, inputText, file) {
     return text;
   } catch (err) {
     throw new Error(`runAgentPrompt failed for agent "${agent.id}": ${err.message}`);
+  }
+}
+
+// One-time, opt-in call triggered by a user leaving feedback on a completed
+// task step — never runs automatically. Returns a suggested replacement for
+// agent.context, or null if the feedback had nothing durable worth keeping
+// (praise/complaint with no reusable fact/preference/correction in it).
+// Throws on real failures rather than swallowing them into null, since the
+// caller needs to tell "nothing durable" apart from "the call broke."
+export async function suggestContextFromFeedback(agent, { feedback, taskInput, stepOutput }) {
+  try {
+    const response = await getClient().models.generateContent({
+      model: CONTEXT_SUGGESTION_MODEL,
+      contents:
+        `Agent role: ${agent.role}\n` +
+        `Current background context (may be empty): ${agent.context || '(none)'}\n` +
+        (taskInput ? `The task this feedback is about: "${taskInput}"\n` : '') +
+        (stepOutput ? `This agent's output on that task: "${String(stepOutput).slice(0, 4000)}"\n` : '') +
+        `User feedback on that output: "${feedback}"\n\n` +
+        'If this feedback contains durable, reusable information the agent should remember for future tasks ' +
+        '(facts, corrections, preferences, standards to follow), produce an updated version of the background ' +
+        'context that incorporates it, staying concise. If the feedback is just praise or complaint with ' +
+        'nothing durable to remember (e.g. "great job", "not good"), respond with exactly: NONE',
+      config: {
+        systemInstruction:
+          'You update a specialist AI agent\'s background context based on user feedback about its work. ' +
+          'Respond with either the updated context text, or exactly the word NONE — no extra commentary, no ' +
+          'markdown, no quotes around your answer.',
+      },
+    });
+    const text = response.text?.trim();
+    if (!text) {
+      throw new Error('Gemini returned an empty response');
+    }
+    if (/^none\.?$/i.test(text)) return null;
+    return text;
+  } catch (err) {
+    throw new Error(`suggestContextFromFeedback failed: ${err.message}`);
   }
 }
 

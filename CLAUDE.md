@@ -90,6 +90,40 @@ example used in tests and docs below — just note it no longer exists until som
   sequential ordering *and* gives independent agents parallel execution for free — there's a
   single code path for single-agent, multi-step pipeline, and parallel-branch tasks.
 
+## Phased execution (added 2026-07-11)
+Every text/structured/feedback agent step now runs as `TEXT_AGENT_PHASES` (currently 2)
+sequential Gemini calls instead of one, via `runAgentPromptPhase()` in `geminiClient.js`, called
+in a loop from `runChain()` in `orchestrator.js`. This is what powers `step.phase` in the API
+contract above — real per-task phase labels (e.g. "Gathering" then "Summarizing") rather than a
+static "Working" the whole time. Mechanics:
+- Each call asks Gemini for structured JSON output (`responseMimeType: 'application/json'`,
+  a `{ phase, content }` schema) — the model picks its own short gerund label for what that
+  phase is doing, specific to the task at hand, not a hardcoded list.
+- Phase 1's prompt asks for "the natural first part of the work" (research/gathering/drafting);
+  the final phase's prompt hands back phase 1's `content` as context and asks for the finished
+  answer. Only the *last* phase's `content` becomes the step's actual `output` — earlier phases'
+  content is intermediate work product, never shown to the user directly.
+- `step.phase` is written back to the store (`saveTask`) after every phase completes, so
+  `GET /api/tasks` reflects the current phase mid-execution, not just at the end.
+- Image agents (`outputType: 'image'`) are unaffected — Imagen has no equivalent notion of an
+  intermediate phase, so they still run as a single `generateImage()` call.
+- Cost/latency tradeoff: this roughly doubles Gemini calls (and therefore latency and token
+  spend) for every non-image agent step. Accepted as worthwhile for the demo; revisit
+  `TEXT_AGENT_PHASES` if either becomes a problem.
+
+**Web access (added 2026-07-11):** every `runAgentPromptPhase()` call passes
+`tools: [{ urlContext: {} }, { googleSearch: {} }]` — real Gemini API tools, not agent-to-agent
+function calling (that's a separate `tools` config, only used by `askOrchestrator()` for routing).
+`urlContext` lets the model fetch and read specific URLs mentioned in its input (e.g. "summarize
+the reviews at this link"); `googleSearch` grounds answers in live search results instead of only
+training-data knowledge. Confirmed compatible with `responseSchema`/JSON mode by testing directly
+against the API before rolling this out. The system instruction in `runAgentPromptPhase()` tells
+the model it has this access so it actually uses it rather than guessing. **Before this, no agent
+in this codebase — in any prior commit — had any real web/search/fetch capability**; anything
+that looked like it (e.g. summarizing "the reviews at this Google link") was the model producing
+plausible-sounding text from training data, not genuinely reading the page. Image agents don't
+get this — Imagen's `generateImages` call has no `tools` support.
+
 ## Locked API contract
 - `GET /api/agents` → array of agent objects (`Agent.toJSON()` shape: `id, name, role,
   inputType, outputType, dependsOnAgent, tone, status, acceptsFiles, specialty, directive,
@@ -109,8 +143,11 @@ example used in tests and docs below — just note it no longer exists until som
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
-  createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output }`, step status one of
-  `pending|working|done|error`. `file` is `{ name, mimeType } | null` — metadata only, set when
+  createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
+  one of `pending|working|done|error|cancelled`. `phase` (**added 2026-07-11**, string, only
+  present once a text/structured/feedback agent's first phase completes) is a short task-specific
+  gerund label — "Gathering", "Summarizing", etc — self-reported by the model each phase; see
+  "Phased execution" below. `file` is `{ name, mimeType } | null` — metadata only, set when
   the task was created with an attachment. `fileWarning` is only present (a string) when a file
   was attached but no agent in the resolved chain could use it — see "File uploads" below.
 - `POST /api/tasks` → creates and kicks off a task, returns it **immediately** with empty
@@ -127,6 +164,11 @@ example used in tests and docs below — just note it no longer exists until som
 - `POST /api/tasks/:id/cancel` → cooperatively cancels a pending/working task, marks unfinished
   steps `cancelled`, and returns involved agents to `idle`. An in-flight provider request cannot
   be forcibly terminated, but its eventual result is discarded and cannot revive the task.
+- `POST /api/optimize` (**added 2026-07-11**) → body `{ text, kind? }`, `kind` is
+  `"agent_directive" | "task_input"` (defaults to a task-prompt rewrite if omitted). Rewrites
+  `text` via Gemini for clarity/effectiveness and returns `{ optimized }`. Powers the "Optimize
+  with Gemini" buttons on the agent directive fields and the task dialog — the frontend replaces
+  the field's contents with `optimized` directly, no preview/accept step.
 
 ## File structure
 ```

@@ -1,7 +1,15 @@
 import { getAllAgents, getAgentById, saveAgent } from './agents/agentStore.js';
 import { getTaskById, saveTask } from './lib/taskStore.js';
-import { askOrchestrator, runAgentPrompt } from './lib/geminiClient.js';
+import { askOrchestrator, runAgentPromptPhase } from './lib/geminiClient.js';
 import { generateImage } from './lib/imagenClient.js';
+
+// Text/structured/feedback agents run in two real, sequential Gemini calls
+// rather than one, so the frontend can show what an agent is actually doing
+// (step.phase, e.g. "Gathering" then "Summarizing") instead of a static
+// "Working" the whole time. Each phase's label is picked by the model itself
+// for that specific task, not hardcoded. Image agents skip this — Imagen has
+// no equivalent notion of an intermediate phase.
+const TEXT_AGENT_PHASES = 2;
 
 // Under a persistent store, `task` here and the object POST /api/tasks/:id/cancel
 // fetches are two separate deserialized copies of the same record — so
@@ -142,9 +150,31 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
           const stepFile = !agent.dependsOnAgent && agent.acceptsFiles && fileBuffer && task.file
             ? { buffer: fileBuffer, mimeType: task.file.mimeType, name: task.file.name }
             : undefined;
-          const output = agent.outputType === 'image'
-            ? await generateImage(stepInput)
-            : await runAgentPrompt(agent, stepInput, stepFile);
+
+          let output;
+          if (agent.outputType === 'image') {
+            output = await generateImage(stepInput);
+          } else {
+            let previousContent;
+            for (let phaseNumber = 1; phaseNumber <= TEXT_AGENT_PHASES; phaseNumber += 1) {
+              const { phase, content } = await runAgentPromptPhase(agent, {
+                input: stepInput,
+                phaseNumber,
+                totalPhases: TEXT_AGENT_PHASES,
+                previousContent,
+                file: phaseNumber === 1 ? stepFile : undefined,
+              });
+              step.phase = phase;
+              await saveTask(task);
+              previousContent = content;
+              if (phaseNumber < TEXT_AGENT_PHASES && (await isCancelled(task.id))) {
+                step.status = 'cancelled';
+                return;
+              }
+            }
+            output = previousContent;
+          }
+
           if (await isCancelled(task.id)) {
             step.status = 'cancelled';
             return;

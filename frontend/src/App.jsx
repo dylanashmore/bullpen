@@ -336,6 +336,34 @@ function ModelSlider({ value, onChange, disabled = false }) {
   );
 }
 
+function OptimizeButton({ text, kind, onOptimized, disabled }) {
+  const [optimizing, setOptimizing] = useState(false);
+  const [error, setError] = useState("");
+
+  async function run() {
+    if (!text.trim() || optimizing) return;
+    setOptimizing(true);
+    setError("");
+    try {
+      const { optimized } = await api.optimizeText(text.trim(), kind);
+      onOptimized(optimized);
+    } catch (err) {
+      setError(err.message || "Could not optimize right now.");
+    } finally {
+      setOptimizing(false);
+    }
+  }
+
+  return (
+    <div className="optimize-row">
+      {error && <span className="optimize-error">{error}</span>}
+      <button type="button" className="optimize-button" onClick={run} disabled={disabled || optimizing || !text.trim()}>
+        <span className="model-red-dot" aria-hidden="true" />{optimizing ? "Optimizing…" : "Optimize with Gemini"}
+      </button>
+    </div>
+  );
+}
+
 function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
   const [name, setName] = useState("");
   const [specialty, setSpecialty] = useState(specialties[0]);
@@ -409,6 +437,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
         </label>
       )}
       <label className="quick-field"><span>How should this agent work?</span><textarea value={directive} onChange={(event) => setDirective(event.target.value)} required maxLength="240" rows="2" placeholder="Describe its instructions, expertise, and working style." /></label>
+      <OptimizeButton text={directive} kind="agent_directive" onOptimized={setDirective} disabled={saving || disabled} />
       <label className="quick-field"><span>Context <small>Optional</small></span><textarea value={context} onChange={(event) => setContext(event.target.value)} maxLength="500" rows="2" placeholder="Background this agent should know — company info, prior facts, constraints. Separate from how it should work." /></label>
       <details className="advanced-agent-settings">
         <summary><span>Advanced setup</span><small>Inputs, outputs, dependencies, and style</small></summary>
@@ -475,6 +504,7 @@ function AgentInstructions({ agent, onUpdate }) {
         {editing ? (
           <>
             <textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows="3" maxLength="500" aria-label={`Instructions for ${agent.name}`} autoFocus />
+            <OptimizeButton text={directive} kind="agent_directive" onOptimized={setDirective} disabled={saving} />
             <div className="agent-instructions-actions"><button type="button" onClick={() => { setDirective(savedDirective); setEditing(false); }}>Cancel</button><button className="save" type="button" onClick={save} disabled={!changed || !directive.trim() || saving}>{saving ? "Saving…" : "Save instructions"}</button></div>
           </>
         ) : (
@@ -515,8 +545,9 @@ function AgentCard({ agent, dependencyName, assignedTask, taskCount, onOpenTask,
   const stepStatus = assignedStep?.status || (assignedTask ? "pending" : "awaiting");
   const stepLabels = { pending: "Waiting", working: "Working", done: "Complete", error: "Error", cancelled: "Stopped" };
   const taskCanStop = assignedTask && (assignedTask.status === "pending" || assignedTask.status === "working");
+  const workingLabel = stepStatus === "working" && assignedStep?.phase ? assignedStep.phase : (stepLabels[stepStatus] || stepStatus);
   const processCopy = assignedStep
-    ? `Step ${stepIndex + 1} of ${assignedTask.steps.length} · ${stepLabels[stepStatus] || stepStatus}`
+    ? `Step ${stepIndex + 1} of ${assignedTask.steps.length} · ${workingLabel}`
     : assignedTask ? "Preparing pipeline…" : "Awaiting task";
   return (
     <article className="agent-card">
@@ -598,7 +629,7 @@ function TaskCard({ task, agents }) {
             const agent = agents.find((item) => item.id === step.agentId);
             return (
               <details className={`task-step ${step.status}`} key={step.agentId} open={task.steps.length === 1 || step.status === "error"}>
-                <summary><span>{agent?.name || step.agentId}</span><span>{step.status}</span></summary>
+                <summary><span>{agent?.name || step.agentId}</span><span>{step.status === "working" && step.phase ? step.phase : step.status}</span></summary>
                 <StepOutput output={step.output} />
               </details>
             );
@@ -662,6 +693,7 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
         <div className="modal-heading"><div><span className="eyebrow">{targetAgent ? `Send to ${targetAgent.name}` : "Send to the bullpen"}</span><h2>{targetAgent ? `Give ${targetAgent.name} a task` : "Run a task"}</h2></div><button className="icon-button modal-close" type="button" onClick={onClose} aria-label="Close dialog">×</button></div>
         <p className="modal-helper">{targetAgent ? `This task goes directly to ${targetAgent.name}. Any required upstream agents will be included automatically.` : "The orchestrator will choose the right agent or build a multi-agent pipeline for you."}</p>
         <label className="field"><span>What do you need?</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows="5" required maxLength="2000" placeholder="e.g. Research our market and write a launch announcement." /></label>
+        <OptimizeButton text={input} kind="task_input" onOptimized={setInput} disabled={submitting} />
         <label className="field"><span>Attachment <small>Optional · max 20MB</small></span><input type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
         {!canRun && <div className="task-warning">Add your Gemini API key and restart the backend before running a task.</div>}
         <footer className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" type="submit" disabled={!canRun || submitting}>{submitting ? "Sending…" : "Run task"}</button></footer>

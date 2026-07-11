@@ -584,7 +584,77 @@ function StepOutput({ output }) {
   return <div className="task-output-text">{String(output)}</div>;
 }
 
-function TaskCard({ task, agents }) {
+// Lets a user leave feedback on a completed step, attributed to whichever
+// agent ran it. onSuggest drafts a possible context update via Gemini
+// without saving anything; the user reviews it and onApply is only called if
+// they explicitly accept — feedback never silently rewrites an agent's
+// context, since that context is shared by everyone who uses this agent.
+function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [suggestion, setSuggestion] = useState(undefined); // undefined = not requested yet, null = "nothing durable", string = suggested context
+  const [applying, setApplying] = useState(false);
+
+  if (!agent) return null;
+
+  function reset() {
+    setOpen(false);
+    setFeedback("");
+    setSuggestion(undefined);
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!feedback.trim()) return;
+    setLoading(true);
+    const result = await onSuggest(agent.id, {
+      feedback: feedback.trim(),
+      taskInput,
+      stepOutput: typeof step.output === "string" ? step.output : undefined,
+    });
+    setLoading(false);
+    if (result === undefined) return; // request failed; already surfaced as a toast, let the user retry
+    setSuggestion(result);
+  }
+
+  async function apply() {
+    setApplying(true);
+    const ok = await onApply(agent.id, suggestion);
+    setApplying(false);
+    if (ok) reset();
+  }
+
+  if (!open) {
+    return <button type="button" className="step-feedback-toggle" onClick={() => setOpen(true)}>Leave feedback for {agent.name}</button>;
+  }
+
+  if (suggestion !== undefined) {
+    return (
+      <div className="step-feedback-suggestion">
+        {suggestion === null
+          ? <p>Nothing durable to remember from that — thanks for the feedback.</p>
+          : <><span>Suggested update to {agent.name}'s context:</span><p>{suggestion}</p></>}
+        <div className="agent-instructions-actions">
+          <button type="button" onClick={reset}>Discard</button>
+          {suggestion !== null && <button className="save" type="button" onClick={apply} disabled={applying}>{applying ? "Applying…" : "Apply to context"}</button>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form className="step-feedback-form" onSubmit={submit}>
+      <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows="2" maxLength="500" placeholder={`What should ${agent.name} know for next time?`} autoFocus />
+      <div className="agent-instructions-actions">
+        <button type="button" onClick={reset}>Cancel</button>
+        <button className="save" type="submit" disabled={!feedback.trim() || loading}>{loading ? "Thinking…" : "Suggest update"}</button>
+      </div>
+    </form>
+  );
+}
+
+function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
   const status = task.status || "pending";
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
@@ -600,6 +670,7 @@ function TaskCard({ task, agents }) {
               <details className={`task-step ${step.status}`} key={step.agentId} open={task.steps.length === 1 || step.status === "error"}>
                 <summary><span>{agent?.name || step.agentId}</span><span>{step.status}</span></summary>
                 <StepOutput output={step.output} />
+                {step.status === "done" && <StepFeedback agent={agent} step={step} taskInput={task.input} onSuggest={onSuggestFeedback} onApply={onApplyContext} />}
               </details>
             );
           })}
@@ -610,7 +681,7 @@ function TaskCard({ task, agents }) {
   );
 }
 
-function TasksView({ tasks, agents, connection, onCreate }) {
+function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onApplyContext }) {
   return (
     <>
       <div className="page-heading">
@@ -619,7 +690,7 @@ function TasksView({ tasks, agents, connection, onCreate }) {
       </div>
       {!connection.geminiConfigured && <div className="api-key-banner"><strong>Gemini API key needed</strong><span>Add <code>GEMINI_API_KEY</code> to the root <code>.env</code> file and restart the backend to run tasks.</span></div>}
       <div className="task-list">
-        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskCard task={task} agents={agents} key={task.id} />)}
+        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} key={task.id} />)}
       </div>
     </>
   );
@@ -810,6 +881,30 @@ export default function App() {
     }
   }
 
+  // Drafts a context suggestion from step feedback — returns the suggestion
+  // (string or null) without persisting anything, or undefined on failure.
+  async function suggestFeedbackContext(id, payload) {
+    try {
+      const { suggestedContext } = await api.suggestContextFromFeedback(id, payload);
+      return suggestedContext;
+    } catch (error) {
+      notify(error.message);
+      return undefined;
+    }
+  }
+
+  async function applyAgentContext(id, context) {
+    try {
+      const updated = await api.updateAgentContext(id, context);
+      setAgents((current) => current.map((agent) => agent.id === id ? updated : agent));
+      notify(`${updated.name}'s context was updated.`);
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
+    }
+  }
+
   function openTaskDialog(targetAgent = null) {
     if (!connection.online) {
       notify(IS_LOCAL_DEV ? "Start the Bullpen backend before running a task." : "The Bullpen service is temporarily unavailable.");
@@ -918,7 +1013,7 @@ export default function App() {
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
               ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onRemove={removeAgent} onModelChange={changeAgentModel} />
-              : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} />}
+              : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />}
           </section>
         </main>
         <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); }} onCreate={createTask} />

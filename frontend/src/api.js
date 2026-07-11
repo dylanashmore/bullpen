@@ -60,6 +60,18 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(fields),
   }),
+  updateAgentContext: (id, context) => request(`/api/agents/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ context }),
+  }),
+  // Drafts a suggested context update from feedback on a completed step —
+  // does not persist anything; pair with updateAgentContext to apply it.
+  suggestContextFromFeedback: (id, { feedback, taskInput, stepOutput }) => request(`/api/agents/${encodeURIComponent(id)}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feedback, taskInput, stepOutput }),
+  }),
   deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

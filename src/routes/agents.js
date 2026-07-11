@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { addAgent, getAgentById, getAllAgents, removeAgent, saveAgent } from '../agents/agentStore.js';
 import { DEFAULT_AGENT_MODEL, isSupportedAgentModel, SUPPORTED_AGENT_MODELS } from '../lib/models.js';
+import { suggestContextFromFeedback } from '../lib/geminiClient.js';
 
 const router = Router();
 
@@ -203,6 +204,28 @@ router.patch('/:id', async (req, res) => {
     res.json(agent.toJSON());
   } catch (err) {
     res.status(500).json({ error: 'Failed to update agent', detail: err.message });
+  }
+});
+
+// Suggestion-only: never writes to the agent. The caller reviews the
+// suggested context and, if they want it, applies it themselves via the
+// existing PATCH /:id (body { context }) — this endpoint just drafts it.
+router.post('/:id/feedback', async (req, res) => {
+  try {
+    const agent = await getAgentById(req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const feedback = req.body?.feedback;
+    if (!feedback || typeof feedback !== 'string' || !feedback.trim()) {
+      return res.status(400).json({ error: 'feedback is required and must be a non-empty string' });
+    }
+    const taskInput = typeof req.body?.taskInput === 'string' ? req.body.taskInput : undefined;
+    const stepOutput = typeof req.body?.stepOutput === 'string' ? req.body.stepOutput : undefined;
+
+    const suggestedContext = await suggestContextFromFeedback(agent, { feedback: feedback.trim(), taskInput, stepOutput });
+    res.json({ suggestedContext });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate context suggestion', detail: err.message });
   }
 });
 

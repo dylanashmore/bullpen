@@ -3,6 +3,8 @@ import { api } from "./api.js";
 import logoUrl from "../images/bull-head.png";
 
 const INTRO_KEY = "bullpen-intro-seen-v4";
+const AUTH_KEY = "bullpen-demo-authenticated";
+const DEMO_ACCOUNT_KEY = "bullpen-demo-account";
 const POLL_INTERVAL_MS = 2000;
 
 const specialties = [
@@ -68,6 +70,14 @@ function shouldShowIntro() {
   }
 }
 
+function isDemoAuthenticated() {
+  try {
+    return sessionStorage.getItem(AUTH_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function IntroSequence({ onComplete }) {
   const [stage, setStage] = useState(0);
 
@@ -96,7 +106,126 @@ function IntroSequence({ onComplete }) {
   );
 }
 
-function Sidebar({ currentView, taskCount, open, connection, onNavigate }) {
+function HomePage({ authenticated, onSignIn, onGetStarted }) {
+  return (
+    <main className="landing-page">
+      <header className="landing-nav">
+        <div className="landing-brand"><span><img src={logoUrl} alt="" /></span>Bullpen</div>
+        <div className="landing-nav-actions">
+          {!authenticated && <button className="landing-login" type="button" onClick={onSignIn}>Sign in</button>}
+          <button className="button primary" type="button" onClick={onGetStarted}>{authenticated ? "Open Bullpen" : "Get started"}</button>
+        </div>
+      </header>
+
+      <section className="landing-hero">
+        <div className="landing-hero-copy">
+          <span className="landing-kicker"><i /> Powered by Gemini</span>
+          <h1>The AI pitchers <span>your business needs.</span></h1>
+          <p>Build a specialized team of AI agents, give them work, and follow every step from assignment to final output.</p>
+          <div className="landing-hero-actions">
+            <button className="button primary large" type="button" onClick={onGetStarted}>{authenticated ? "Open my Bullpen" : "Create your first agent"} <span aria-hidden="true">→</span></button>
+            {!authenticated && <button className="button secondary large" type="button" onClick={onSignIn}>I already have an account</button>}
+          </div>
+          <div className="landing-note"><span>✦</span> Set up an agent in minutes. No credit card required.</div>
+        </div>
+
+        <div className="landing-visual" aria-label="How Bullpen works">
+          <div className="landing-visual-glow" />
+          <div className="roster-window">
+            <div className="roster-window-head"><span>Your bullpen</span><small><i /> Ready</small></div>
+            <div className="roster-play">
+              <div className="roster-number">01</div>
+              <div><span>Build a specialist</span><strong>Name it, shape its role, and choose its Gemini model.</strong></div>
+            </div>
+            <div className="roster-connector"><span /><i /><span /></div>
+            <div className="roster-play active">
+              <div className="roster-number">02</div>
+              <div><span>Call the play</span><strong>Assign a clear task directly to the right agent.</strong></div>
+            </div>
+            <div className="roster-connector"><span /><i /><span /></div>
+            <div className="roster-play">
+              <div className="roster-number">03</div>
+              <div><span>Watch it work</span><strong>See live progress, update instructions, or stop at any time.</strong></div>
+            </div>
+          </div>
+          <div className="landing-model-chip"><span /> Gemini model control</div>
+        </div>
+      </section>
+
+      <section className="landing-features" aria-label="Bullpen features">
+        <article><span>01</span><h2>Hire for the job</h2><p>Create focused agents with their own specialty, tone, inputs, outputs, and working style.</p></article>
+        <article><span>02</span><h2>Build a real workflow</h2><p>Connect agents so research, writing, design, and analysis move through one coordinated pipeline.</p></article>
+        <article><span>03</span><h2>Stay in control</h2><p>Track task history and current steps, then change instructions or stop an agent whenever you need to.</p></article>
+      </section>
+    </main>
+  );
+}
+
+function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack }) {
+  const [mode, setMode] = useState(initialMode);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event) {
+    event.preventDefault();
+    if (mode === "signup") {
+      if (username.trim().length < 3) {
+        setError("Choose a username with at least 3 characters.");
+        return;
+      }
+      if (password.length < 6) {
+        setError("Choose a password with at least 6 characters.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Those passwords do not match.");
+        return;
+      }
+      onSignUp(username, password);
+      return;
+    }
+    if (!onLogin(username, password)) {
+      setError("That username or password is not correct. Try the demo access below.");
+      return;
+    }
+    setError("");
+  }
+
+  function changeMode(nextMode) {
+    setMode(nextMode);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+  }
+
+  return (
+    <main className="login-screen">
+      <button className="login-back" type="button" onClick={onBack}><span aria-hidden="true">←</span> Back to home</button>
+      <div className="login-orbit" aria-hidden="true"><span /><img src={logoUrl} alt="" /></div>
+      <form className="login-card" onSubmit={submit}>
+        <div className="auth-tabs" role="tablist" aria-label="Account access">
+          <button className={mode === "signin" ? "active" : ""} type="button" role="tab" aria-selected={mode === "signin"} onClick={() => changeMode("signin")}>Sign in</button>
+          <button className={mode === "signup" ? "active" : ""} type="button" role="tab" aria-selected={mode === "signup"} onClick={() => changeMode("signup")}>Sign up</button>
+        </div>
+        <span className="eyebrow">{mode === "signin" ? "Welcome back" : "Join the roster"}</span>
+        <h1>{mode === "signin" ? "Enter the Bullpen" : "Create your account"}</h1>
+        <p>{mode === "signin" ? "Sign in to manage your agents and their work." : "Create a demo account and start building your AI team."}</p>
+        <label><span>Username</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus required placeholder="admin" /></label>
+        <label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "signin" ? "current-password" : "new-password"} required placeholder={mode === "signin" ? "password" : "At least 6 characters"} /></label>
+        {mode === "signup" && <label><span>Confirm password</span><input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required placeholder="Enter it again" /></label>}
+        {error && <div className="login-error" role="alert">{error}</div>}
+        <button className="button primary" type="submit">{mode === "signin" ? "Sign in" : "Create account"}</button>
+        {mode === "signin" ? <div className="demo-credentials"><span>Demo access</span><code>admin</code><span>/</span><code>password</code></div> : <div className="demo-credentials"><span>Hackathon demo</span><span>Your account stays in this browser session</span></div>}
+      </form>
+    </main>
+  );
+}
+
+function Sidebar({ currentView, tasks, open, connection, onNavigate, onSignOut }) {
+  const recentTasks = tasks.slice(0, 7);
+  const taskStatusLabels = { pending: "Queued", working: "In progress", done: "Completed", error: "Error", cancelled: "Stopped" };
   const connectionCopy = !connection.online
     ? { title: "Backend offline", detail: "Start the server on port 3000", state: "offline" }
     : connection.geminiConfigured
@@ -114,13 +243,25 @@ function Sidebar({ currentView, taskCount, open, connection, onNavigate }) {
         </button>
         <button className={`nav-item${currentView === "tasks" ? " active" : ""}`} type="button" onClick={() => onNavigate("tasks")} aria-current={currentView === "tasks" ? "page" : undefined}>
           <TasksIcon /> Tasks
-          {taskCount > 0 && <span className="nav-count">{taskCount}</span>}
+          {tasks.length > 0 && <span className="nav-count">{tasks.length}</span>}
         </button>
       </nav>
+      <section className="sidebar-history" aria-labelledby="task-history-title">
+        <div className="sidebar-history-heading"><span id="task-history-title">Task history</span>{tasks.length > recentTasks.length && <button type="button" onClick={() => onNavigate("tasks")}>View all</button>}</div>
+        <div className="sidebar-history-list">
+          {recentTasks.length === 0 ? <p>No tasks yet</p> : recentTasks.map((task) => (
+            <button className="history-task" type="button" onClick={() => onNavigate("tasks")} title={task.input} key={task.id}>
+              <span className={`history-status ${task.status}`} aria-hidden="true" />
+              <span className="history-task-copy"><strong>{task.input}</strong><small>{taskStatusLabels[task.status] || task.status}</small></span>
+            </button>
+          ))}
+        </div>
+      </section>
       <div className={`sidebar-note ${connectionCopy.state}`}>
         <span className="signal-dot" aria-hidden="true" />
         <div><strong>{connectionCopy.title}</strong><span>{connectionCopy.detail}</span></div>
       </div>
+      <button className="sidebar-signout" type="button" onClick={onSignOut}>Sign out</button>
     </aside>
   );
 }
@@ -519,6 +660,9 @@ export default function App() {
   const [connection, setConnection] = useState({ online: false, geminiConfigured: false });
   const [loading, setLoading] = useState(true);
   const [showIntro, setShowIntro] = useState(shouldShowIntro);
+  const [authenticated, setAuthenticated] = useState(isDemoAuthenticated);
+  const [authMode, setAuthMode] = useState(null);
+  const [inWorkspace, setInWorkspace] = useState(false);
   const [view, setView] = useState("agents");
   const [menuOpen, setMenuOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
@@ -673,6 +817,58 @@ export default function App() {
     setShowIntro(false);
   }
 
+  function login(username, password) {
+    const normalizedUsername = username.trim().toLowerCase();
+    let savedAccount = null;
+    try { savedAccount = JSON.parse(sessionStorage.getItem(DEMO_ACCOUNT_KEY)); } catch { /* A saved demo account is optional. */ }
+    const isAdmin = normalizedUsername === "admin" && password === "password";
+    const isSavedAccount = savedAccount && normalizedUsername === savedAccount.username && password === savedAccount.password;
+    if (!isAdmin && !isSavedAccount) return false;
+    try { sessionStorage.setItem(AUTH_KEY, "true"); } catch { /* Session persistence is optional. */ }
+    setAuthenticated(true);
+    setAuthMode(null);
+    setInWorkspace(true);
+    return true;
+  }
+
+  function signUp(username, password) {
+    const account = { username: username.trim().toLowerCase(), password };
+    try {
+      sessionStorage.setItem(DEMO_ACCOUNT_KEY, JSON.stringify(account));
+      sessionStorage.setItem(AUTH_KEY, "true");
+    } catch { /* Session persistence is optional. */ }
+    setAuthenticated(true);
+    setAuthMode(null);
+    setInWorkspace(true);
+  }
+
+  function signOut() {
+    try { sessionStorage.removeItem(AUTH_KEY); } catch { /* Session persistence is optional. */ }
+    setAuthenticated(false);
+    setAuthMode(null);
+    setInWorkspace(false);
+    setMenuOpen(false);
+  }
+
+  function enterBullpen(authFallbackMode) {
+    if (authenticated) {
+      setInWorkspace(true);
+      return;
+    }
+    setAuthMode(authFallbackMode);
+  }
+
+  if (!inWorkspace) {
+    return (
+      <>
+        {showIntro && <IntroSequence onComplete={completeIntro} />}
+        {authMode
+          ? <AuthScreen initialMode={authMode} onLogin={login} onSignUp={signUp} onBack={() => setAuthMode(null)} />
+          : <HomePage authenticated={authenticated} onSignIn={() => enterBullpen("signin")} onGetStarted={() => enterBullpen("signup")} />}
+      </>
+    );
+  }
+
   if (loading && !showIntro) {
     return <div className="backend-loading"><img src={logoUrl} alt="" /><span>Opening the Bullpen…</span></div>;
   }
@@ -681,7 +877,7 @@ export default function App() {
     <>
       {showIntro && <IntroSequence onComplete={completeIntro} />}
       <div className={`app-shell${hasWorkspaceContent ? " has-sidebar" : " sidebarless"}`}>
-        {hasWorkspaceContent && <Sidebar currentView={view} taskCount={tasks.length} open={menuOpen} connection={connection} onNavigate={navigate} />}
+        {hasWorkspaceContent && <Sidebar currentView={view} tasks={tasks} open={menuOpen} connection={connection} onNavigate={navigate} onSignOut={signOut} />}
         {hasWorkspaceContent && menuOpen && <button className="sidebar-backdrop" type="button" onClick={() => setMenuOpen(false)} aria-label="Close navigation" />}
         <main className="main-content">
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}

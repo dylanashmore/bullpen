@@ -230,7 +230,7 @@ function AuthScreen({ initialMode = "signin", onLogin, onSignUp, onBack, onModeC
   );
 }
 
-function Sidebar({ currentView, tasks, open, connection, onNavigate, onSignOut }) {
+function Sidebar({ currentView, tasks, open, connection, onNavigate, onOpenTask, onSignOut }) {
   const recentTasks = tasks.slice(0, 7);
   const taskStatusLabels = { pending: "Queued", working: "In progress", done: "Completed", error: "Error", cancelled: "Stopped" };
   const connectionCopy = !connection.online
@@ -257,7 +257,7 @@ function Sidebar({ currentView, tasks, open, connection, onNavigate, onSignOut }
         <div className="sidebar-history-heading"><span id="task-history-title">Task history</span>{tasks.length > recentTasks.length && <button type="button" onClick={() => onNavigate("tasks")}>View all</button>}</div>
         <div className="sidebar-history-list">
           {recentTasks.length === 0 ? <p>No tasks yet</p> : recentTasks.map((task) => (
-            <button className="history-task" type="button" onClick={() => onNavigate("tasks")} title={task.input} key={task.id}>
+            <button className="history-task" type="button" onClick={() => onOpenTask(task.id)} title={task.input} key={task.id}>
               <span className={`history-status ${task.status}`} aria-hidden="true" />
               <span className="history-task-copy"><strong>{task.input}</strong><small>{taskStatusLabels[task.status] || task.status}</small></span>
             </button>
@@ -865,6 +865,7 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
   return (
     <form className="step-feedback-form" onSubmit={submit}>
       <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows="2" maxLength="500" placeholder={`What should ${agent.name} know for next time?`} autoFocus />
+      <OptimizeButton text={feedback} kind="agent_directive" onOptimized={setFeedback} disabled={loading} />
       <div className="agent-instructions-actions">
         <button type="button" onClick={reset}>Cancel</button>
         <button className="save" type="submit" disabled={!feedback.trim() || loading}>{loading ? "Thinking…" : "Suggest update"}</button>
@@ -900,7 +901,25 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext }) {
   );
 }
 
-function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onApplyContext }) {
+// Compact, clickable row for the task index — each task now lives on its own
+// page (see TaskDetailView); this list is just a way to get there, so it
+// stays lightweight rather than rendering every step/output inline.
+function TaskListRow({ task, agents, onOpen }) {
+  const status = task.status || "pending";
+  const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
+  return (
+    <button type="button" className={`task-row ${status}`} onClick={() => onOpen(task.id)}>
+      <span className={`history-status ${status}`} aria-hidden="true" />
+      <span className="task-row-copy">
+        <strong>{task.input}</strong>
+        <small>{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</small>
+      </span>
+      <span className={`task-status ${status}`}>{status}</span>
+    </button>
+  );
+}
+
+function TasksView({ tasks, agents, connection, onCreate, onOpen }) {
   return (
     <>
       <div className="page-heading">
@@ -909,8 +928,27 @@ function TasksView({ tasks, agents, connection, onCreate, onSuggestFeedback, onA
       </div>
       {!connection.geminiConfigured && <div className="api-key-banner"><strong>Gemini API key needed</strong><span>Add <code>GEMINI_API_KEY</code> to the root <code>.env</code> file and restart the backend to run tasks.</span></div>}
       <div className="task-list">
-        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} key={task.id} />)}
+        {tasks.length === 0 ? <div className="list-empty"><strong>No tasks yet</strong>Run a task and the orchestrator’s live progress will appear here.</div> : tasks.map((task) => <TaskListRow task={task} agents={agents} onOpen={onOpen} key={task.id} />)}
       </div>
+    </>
+  );
+}
+
+// Each task's own page (linked from the Tasks index and the sidebar's recent
+// history) — renders the full TaskCard (steps, outputs, feedback) rather than
+// the compact row used in the list.
+function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext }) {
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <button className="task-detail-back" type="button" onClick={onBack}>← All tasks</button>
+          <span className="eyebrow">Task</span>
+        </div>
+      </div>
+      {task
+        ? <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} />
+        : <div className="list-empty"><strong>Task not found</strong>It may have been removed, or hasn't loaded yet.</div>}
     </>
   );
 }
@@ -979,8 +1017,10 @@ export default function App() {
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const hasWorkspaceContent = agents.length > 0 || tasks.length > 0;
-  const isWorkspaceRoute = route === "/app" || route === "/app/agents" || route === "/app/tasks";
-  const view = route === "/app/tasks" ? "tasks" : "agents";
+  const taskDetailMatch = route.match(/^\/app\/tasks\/([^/]+)$/);
+  const taskDetailId = taskDetailMatch ? decodeURIComponent(taskDetailMatch[1]) : null;
+  const isWorkspaceRoute = route === "/app" || route === "/app/agents" || route === "/app/tasks" || Boolean(taskDetailMatch);
+  const view = taskDetailMatch ? "task-detail" : route === "/app/tasks" ? "tasks" : "agents";
 
   useEffect(() => {
     let cancelled = false;
@@ -1035,6 +1075,10 @@ export default function App() {
 
   function navigate(nextView) {
     navigatePath(`/app/${nextView}`);
+  }
+
+  function openTask(taskId) {
+    navigatePath(`/app/tasks/${encodeURIComponent(taskId)}`);
   }
 
   async function createAgent(data) {
@@ -1250,14 +1294,16 @@ export default function App() {
   return (
     <>
       <div className={`app-shell${hasWorkspaceContent ? " has-sidebar" : " sidebarless"}`}>
-        {hasWorkspaceContent && <Sidebar currentView={view} tasks={tasks} open={menuOpen} connection={connection} onNavigate={navigate} onSignOut={signOut} />}
+        {hasWorkspaceContent && <Sidebar currentView={view === "task-detail" ? "tasks" : view} tasks={tasks} open={menuOpen} connection={connection} onNavigate={navigate} onOpenTask={openTask} onSignOut={signOut} />}
         {hasWorkspaceContent && menuOpen && <button className="sidebar-backdrop" type="button" onClick={() => setMenuOpen(false)} aria-label="Close navigation" />}
         <main className="main-content">
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
               ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
-              : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />}
+              : view === "task-detail"
+                ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />
+                : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} />}
           </section>
         </main>
         <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); }} onCreate={createTask} />

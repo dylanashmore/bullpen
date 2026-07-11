@@ -411,6 +411,14 @@
 .connection-alert code, .api-key-banner code { font-family: var(--font-mono); }
 
 .task-list { display: flex; flex-direction: column; gap: 12px; }
+.task-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 18px; border: 1px solid var(--line); border-radius: var(--radius-md); color: var(--text); background: rgba(255, 255, 255, 0.02); text-align: left; cursor: pointer; transition: background 120ms ease, border-color 120ms ease; }
+.task-row:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.045); }
+.task-row .history-status { width: 7px; height: 7px; }
+.task-row-copy { min-width: 0; flex: 1 1 auto; }
+.task-row-copy strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.task-row-copy small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; }
+.task-detail-back { display: flex; align-items: center; margin-bottom: 10px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 11px; font-weight: 600; cursor: pointer; }
+.task-detail-back:hover { text-decoration: underline; }
 .task-card { position: relative; overflow: hidden; padding: 20px 22px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.02); }
 .task-card.error { border-left: 3px solid var(--bullpen-red); background: linear-gradient(90deg, var(--bullpen-red-soft), rgba(255, 255, 255, 0.02) 24%); }
 .task-card.done { border-color: rgba(140, 240, 181, 0.18); }

@@ -358,6 +358,32 @@ one-line preview in its `<summary>` and expands on click. This keeps the default
 down without removing any functionality; editing instructions still works the same way, just
 inside the expanded panel.
 
+**Per-task pages (current, added 2026-07-11):** each task now has its own URL,
+`/app/tasks/:id`, rather than every task rendering in full on one long "Tasks" page. The
+lightweight client-side router (plain `route` state + `window.history.pushState`/`popstate` in
+`App` — no `react-router-dom` dependency) gained a `/^\/app\/tasks\/([^/]+)$/` match alongside
+its existing `/app`, `/app/agents`, `/app/tasks` routes; matching it sets `view = "task-detail"`
+and extracts the id. `TasksView` (the "Tasks" tab) is now just an index — `TaskListRow` renders
+one compact clickable row per task (status dot, input text, meta, status badge), calling the new
+`openTask(taskId)` helper (`navigatePath('/app/tasks/${id}')`) on click; it no longer renders
+steps/outputs/feedback inline. The full per-step detail — everything `TaskCard` already
+rendered (steps, `StepOutput`, `StepFeedback`) — now only renders on the dedicated
+`TaskDetailView` page, reached either from a `TaskListRow` or from the sidebar's "Task history"
+rows (`Sidebar`'s `history-task` buttons now call a passed-down `onOpenTask(task.id)` instead of
+just switching to the "tasks" tab). `TaskDetailView` has a "← All tasks" back link
+(`navigate("tasks")`) above the same `TaskCard` used before; if the id doesn't match any loaded
+task (removed, or not loaded yet) it shows a "Task not found" empty state instead of crashing.
+The sidebar's "Tasks" nav item still highlights as active while on a task-detail page (`Sidebar`
+receives `currentView="tasks"` for both the `"tasks"` and `"task-detail"` view states).
+
+**Optimize button on step feedback (current, added 2026-07-11):** `StepFeedback`'s textarea (the
+"Leave feedback for {agent}" form on a completed step, on the task-detail page) now has the same
+`OptimizeButton` component used on the agent-directive and task-input fields, calling `POST
+/api/optimize` with `kind: "agent_directive"` (feedback reads as durable instruction-like content
+for the agent's future behavior, the closest semantic fit of the two existing `kind` values —
+no new backend `kind` was added). Same "rewrite in place, no preview step" behavior as everywhere
+else `OptimizeButton` is used.
+
 ## Keeping this file accurate
 Update this file whenever the API contract or the file structure above actually changes — not
 just at project start. If you add a new agent field, a new route, or change how routing/

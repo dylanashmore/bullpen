@@ -5,6 +5,7 @@ import { DEFAULT_AGENT_MODEL } from './models.js';
 // see the comment in src/lib/models.js on why this is gemini-3.5-flash now.
 const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
 const CONTEXT_SUGGESTION_MODEL = 'gemini-3.5-flash';
+const TEAM_DRAFT_MODEL = 'gemini-3.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;
@@ -110,6 +111,72 @@ export async function suggestContextFromFeedback(agent, { feedback, taskInput, s
     return text;
   } catch (err) {
     throw new Error(`suggestContextFromFeedback failed: ${err.message}`);
+  }
+}
+
+// One-time call from the mandatory "describe your business" onboarding flow
+// (shown instead of the manual creation form on an empty roster) — drafts a
+// starting team tailored to the stated business/goal, adjusted by time
+// horizon: short-term gets a lean 1-2 agent team with no persistent context
+// (a one-off goal doesn't need it); long-term gets a fuller 3-5 agent team
+// with each agent's context pre-filled with the business background, since
+// it'll carry into every future task. Suggestion-only — the caller reviews
+// and edits the draft, then creates whichever agents it keeps through the
+// completely ordinary POST /api/agents path.
+export async function draftTeamForBusiness({ description, goal, term }) {
+  const isLongTerm = term === 'long';
+  try {
+    const response = await getClient().models.generateContent({
+      model: TEAM_DRAFT_MODEL,
+      contents:
+        `Business description: ${description}\n` +
+        `What they want this AI agent platform to help with: ${goal}\n` +
+        `Time horizon: ${isLongTerm ? 'long-term, ongoing work' : 'short-term, one specific immediate goal'}\n\n` +
+        (isLongTerm
+          ? 'Draft a team of 3-5 specialist agents that could handle this kind of work on an ongoing basis. ' +
+            'Give each agent a concise "context" field summarizing the business background it should always ' +
+            'keep in mind for future tasks.'
+          : 'Draft a lean team of 1-2 specialist agents focused specifically on getting this immediate goal ' +
+            'done quickly. Leave "context" empty for these — a one-off goal does not need persistent business ' +
+            'background.'),
+      config: {
+        systemInstruction:
+          'You design a starting roster of specialist AI agents for a multi-agent task system, based on a ' +
+          'business description, a stated goal, and a time horizon. Each agent needs a clear, distinct role — ' +
+          'do not draft overlapping or redundant agents.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            agents: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: 'Short job-title-like name, e.g. "Copywriter" or "Data Analyst".' },
+                  role: { type: 'string', description: 'One to two sentence description of what this agent does.' },
+                  specialty: { type: 'string', description: 'Short category label, e.g. "Writing" or "Data analysis".' },
+                  inputType: { type: 'string', description: 'What kind of input this agent expects, e.g. "topic" or "agent_output".' },
+                  outputType: { type: 'string', enum: ['text', 'image', 'structured', 'feedback'] },
+                  tone: { type: 'string', description: 'Optional working style/tone, e.g. "concise and analytical".' },
+                  context: { type: 'string', description: 'Optional business background this agent should keep in mind. Empty string if not needed.' },
+                },
+                required: ['name', 'role', 'specialty', 'inputType', 'outputType'],
+              },
+            },
+          },
+          required: ['agents'],
+        },
+      },
+    });
+    const text = response.text;
+    if (!text) {
+      throw new Error('Gemini returned an empty response');
+    }
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed.agents) ? parsed.agents : [];
+  } catch (err) {
+    throw new Error(`draftTeamForBusiness failed: ${err.message}`);
   }
 }
 

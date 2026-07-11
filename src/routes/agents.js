@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { addAgent, getAgentById, getAllAgents, removeAgent, saveAgent } from '../agents/agentStore.js';
 import { DEFAULT_AGENT_MODEL, isSupportedAgentModel, SUPPORTED_AGENT_MODELS } from '../lib/models.js';
-import { suggestContextFromFeedback } from '../lib/geminiClient.js';
+import { suggestContextFromFeedback, draftTeamForBusiness } from '../lib/geminiClient.js';
 
 const router = Router();
 
@@ -59,6 +59,32 @@ router.post('/', async (req, res) => {
     res.status(201).json(agent.toJSON());
   } catch (err) {
     res.status(500).json({ error: 'Failed to create agent', detail: err.message });
+  }
+});
+
+// Suggestion-only: never creates anything. Powers the mandatory "describe
+// your business" onboarding flow shown on an empty roster — the frontend
+// reviews/edits the drafted team and creates whichever agents it keeps
+// through the normal POST /api/agents path, one at a time.
+router.post('/draft-team', async (req, res) => {
+  try {
+    const description = req.body?.description;
+    const goal = req.body?.goal;
+    const term = req.body?.term;
+    if (!description || typeof description !== 'string' || !description.trim()) {
+      return res.status(400).json({ error: 'description is required and must be a non-empty string' });
+    }
+    if (!goal || typeof goal !== 'string' || !goal.trim()) {
+      return res.status(400).json({ error: 'goal is required and must be a non-empty string' });
+    }
+    if (term !== 'short' && term !== 'long') {
+      return res.status(400).json({ error: 'term must be either "short" or "long"' });
+    }
+
+    const draft = await draftTeamForBusiness({ description: description.trim(), goal: goal.trim(), term });
+    res.json({ draft });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to draft a team', detail: err.message });
   }
 });
 

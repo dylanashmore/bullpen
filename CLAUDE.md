@@ -71,7 +71,8 @@ pipelines generically, without hardcoding per-agent logic anywhere.
 researcher/writer/designer/artist-style pipeline) is created by the user via `POST
 /api/agents`. This was previously auto-seeded (`seedDefaultAgents()` in `agentStore.js`) but
 was deliberately removed so a fresh sign-in doesn't come pre-populated — the frontend's
-`EmptyAgents` empty state (`frontend/src/App.jsx`) handles the zero-agent case. A four-agent
+`BusinessOnboarding` component (`frontend/src/App.jsx`) handles the zero-agent case, a
+mandatory "describe your business" flow — see "Frontend" below. A four-agent
 `writer → designer → artist` (plus standalone `researcher`) pipeline is still the canonical
 example used in tests and docs below — just note it no longer exists until someone creates it.
 
@@ -112,6 +113,14 @@ example used in tests and docs below — just note it no longer exists until som
   dependency cycle (walks the chain via `wouldCreateCycle` in `routes/agents.js` —
   self-reference and any multi-hop loop are both rejected with 400, since nothing else in the
   codebase prevented this before, even at creation). At least one field must be provided.
+- `POST /api/agents/draft-team` → body `{ description, goal, term }`, all three required;
+  `term` must be `"short"` or `"long"`. **Suggestion-only — never creates anything.** One
+  Gemini call (`draftTeamForBusiness` in `geminiClient.js`, structured JSON output) drafts a
+  starting roster tailored to the business/goal — `term: "short"` yields a lean 1-2 agent team
+  with empty `context`; `term: "long"` yields a fuller 3-5 agent team with each draft's
+  `context` pre-filled with the business background. Returns `{ draft: [{ name, role,
+  specialty, inputType, outputType, tone, context }, ...] }`. Powers the mandatory onboarding
+  flow — see "Frontend" below.
 - `POST /api/agents/:id/feedback` → body `{ feedback, taskInput?, stepOutput? }`, `feedback`
   required non-empty string. **Suggestion-only — never writes to the agent.** One Gemini call
   (`suggestContextFromFeedback` in `geminiClient.js`) drafts an updated `context` incorporating
@@ -157,7 +166,9 @@ src/
     geminiClient.js    — runAgentPrompt() (specialist text gen, optionally attaches a file via
                          the Gemini Files API), askOrchestrator() (routing via function calling),
                          suggestContextFromFeedback() (drafts a context update from step
-                         feedback, or null if nothing durable — never called automatically)
+                         feedback, or null if nothing durable), draftTeamForBusiness() (drafts a
+                         starting roster for the mandatory onboarding flow, structured JSON
+                         output) — none of the draft/suggestion calls run automatically
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
                          or null if neither is set; agentStore/taskStore both branch on this
@@ -169,7 +180,9 @@ src/
                          an optional file buffer to accepting root agents)
   routes/
     agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation; POST /:id/feedback
-                         drafts a context suggestion from feedback without persisting it
+                         drafts a context suggestion from feedback without persisting it;
+                         POST /draft-team drafts a starting roster from a business
+                         description/goal/term, also without persisting anything
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
                          an optional multipart file upload alongside the JSON path
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
@@ -255,18 +268,29 @@ and render live task/step status, text or image output, upload metadata, warning
 The sidebar reports backend/key readiness. Browser `localStorage` is no longer the source of
 truth; both backend stores are in memory and reset when the backend restarts.
 
-**Agent creation flow (current):** the "New agent" / `QuickCreateAgent` form has a Specialty
-dropdown (Research / Writing / Software development / Data analysis / Customer support /
-Project management / "Create your own…" for a free-text specialty), a required "How should this
-agent work?" directive field, an optional "Context" field (**added 2026-07-11** — background/
-knowledge the agent should know, distinct from the directive; see `context` in the API contract
-above), an "Advanced setup" section (input/output type, `dependsOnAgent`, tone, style,
-inspired-by), an "Accept file uploads" checkbox (disabled whenever `dependsOnAgent` is set,
-matching the backend rule that only entry-point agents can receive a file), and a Gemini model
-slider (`ModelSlider`). Everything submits via `POST /api/agents`. Since there's no seeded
-starter roster anymore (see "Core concept" above), every agent — including a
-`writer → designer → artist`-style pipeline — has to be built through this form from a
-completely empty roster on first sign-in.
+**Business onboarding (current, mandatory on an empty roster):** `BusinessOnboarding` replaces
+the manual creation form entirely until at least one agent exists — there is no "skip this" or
+"create manually instead" path. Two required steps: (1) an intake form (business description,
+goal, and a short-/long-term `<select>`, all `required`) that calls `POST
+/api/agents/draft-team`; (2) a review step listing every drafted agent as an editable card
+(Name/Specialty/directive/Tone, plus a Context field only shown for `term: "long"`, since
+short-term drafts don't get one) with a per-card remove button. Nothing is created during
+drafting — "Add N agents to Bullpen" loops the kept rows through the same `onCreate` handler
+the manual form uses (`POST /api/agents`, one call per agent, sequential), and any card the
+user removed just never gets created. Same "preview, never silent" pattern as every other
+Gemini-assisted feature in this app.
+
+**Agent creation flow (current, once the roster is non-empty):** the "New agent" /
+`QuickCreateAgent` form — used for adding *more* agents after the mandatory onboarding above has
+created at least one — has a Specialty dropdown (Research / Writing / Software development /
+Data analysis / Customer support / Project management / "Create your own…" for a free-text
+specialty), a required "How should this agent work?" directive field, an optional "Context"
+field (**added 2026-07-11** — background/knowledge the agent should know, distinct from the
+directive; see `context` in the API contract above), an "Advanced setup" section (input/output
+type, `dependsOnAgent`, tone, style, inspired-by), an "Accept file uploads" checkbox (disabled
+whenever `dependsOnAgent` is set, matching the backend rule that only entry-point agents can
+receive a file), and a Gemini model slider (`ModelSlider`). Everything submits via `POST
+/api/agents`.
 
 **Agent card layout (current):** `AgentCard` keeps the header, today's-task/current-process
 status boxes, assign button, model slider, and footer always visible, but both the "Instructions"

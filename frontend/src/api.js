@@ -72,6 +72,13 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ feedback, taskInput, stepOutput }),
   }),
+  // Drafts a starting team from a business description/goal/term — does not
+  // create anything; pair with createAgent (once per kept row) to apply it.
+  draftTeamForBusiness: ({ description, goal, term }) => request("/api/agents/draft-team", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description, goal, term }),
+  }),
   deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

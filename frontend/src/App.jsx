@@ -436,15 +436,125 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
   );
 }
 
-function EmptyAgents({ onCreate, connection }) {
+// Mandatory first step on an empty roster — replaces manual agent creation
+// entirely until at least one agent exists. Two steps: describe the business
+// (required fields, no skipping), then review/edit the drafted team before
+// anything gets created. Nothing is created during drafting itself; each kept
+// row goes through the completely ordinary onCreate (POST /api/agents) path,
+// one at a time, only when the user confirms.
+function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
+  const [step, setStep] = useState("intake"); // "intake" | "reviewing"
+  const [description, setDescription] = useState("");
+  const [goal, setGoal] = useState("");
+  const [term, setTerm] = useState("short");
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState([]);
+  const [creating, setCreating] = useState(false);
+
+  async function submitIntake(event) {
+    event.preventDefault();
+    if (!description.trim() || !goal.trim()) return;
+    setDrafting(true);
+    const agents = await onDraftTeam({ description: description.trim(), goal: goal.trim(), term });
+    setDrafting(false);
+    if (!agents || agents.length === 0) return; // failure already surfaced as a toast; stay put to retry
+    setDraft(agents.map((agent, index) => ({
+      _key: index,
+      name: agent.name || "",
+      specialty: agent.specialty || "",
+      role: agent.role || "",
+      inputType: agent.inputType || "topic",
+      outputType: outputTypes.some((item) => item.value === agent.outputType) ? agent.outputType : "text",
+      tone: agent.tone || "",
+      context: agent.context || "",
+    })));
+    setStep("reviewing");
+  }
+
+  function updateDraft(key, field, value) {
+    setDraft((current) => current.map((item) => (item._key === key ? { ...item, [field]: value } : item)));
+  }
+
+  function removeDraft(key) {
+    setDraft((current) => current.filter((item) => item._key !== key));
+  }
+
+  async function createTeam() {
+    setCreating(true);
+    for (const item of draft) {
+      await onCreate({
+        name: item.name.trim(),
+        specialty: item.specialty.trim(),
+        directive: item.role.trim(),
+        inputType: item.inputType.trim(),
+        outputType: item.outputType,
+        dependsOnAgent: null,
+        acceptsFiles: false,
+        tone: item.tone.trim() || null,
+        style: null,
+        inspiredBy: null,
+        context: item.context.trim() || null,
+      });
+    }
+    setCreating(false);
+  }
+
+  if (step === "reviewing") {
+    return (
+      <div className="empty-state">
+        <span className="eyebrow">Your starting team</span>
+        <h1>Here's who we'd hire</h1>
+        <p>Review and adjust before adding them to your roster — remove any you don't want.</p>
+        {draft.length === 0 ? (
+          <p className="task-warning">Every draft was removed — go back to draft a new team.</p>
+        ) : (
+          <div className="agent-grid">
+            {draft.map((item) => (
+              <div className="agent-card" key={item._key}>
+                <div className="agent-card-head">
+                  <div className="agent-avatar" aria-hidden="true">{initials(item.name || "?")}</div>
+                  <div className="agent-title"><h2>{item.name || "Unnamed"}</h2><span className="agent-role">{item.specialty}</span></div>
+                  <div className="card-menu"><button className="icon-button" type="button" onClick={() => removeDraft(item._key)} aria-label={`Remove ${item.name}`}>×</button></div>
+                </div>
+                <label className="quick-field"><span>Name</span><input value={item.name} onChange={(event) => updateDraft(item._key, "name", event.target.value)} maxLength="32" /></label>
+                <label className="quick-field"><span>Specialty</span><input value={item.specialty} onChange={(event) => updateDraft(item._key, "specialty", event.target.value)} maxLength="48" /></label>
+                <label className="quick-field"><span>How should this agent work?</span><textarea value={item.role} onChange={(event) => updateDraft(item._key, "role", event.target.value)} rows="2" maxLength="240" /></label>
+                <label className="quick-field"><span>Tone</span><input value={item.tone} onChange={(event) => updateDraft(item._key, "tone", event.target.value)} maxLength="80" /></label>
+                {term === "long" && <label className="quick-field"><span>Context</span><textarea value={item.context} onChange={(event) => updateDraft(item._key, "context", event.target.value)} rows="2" maxLength="500" /></label>}
+              </div>
+            ))}
+          </div>
+        )}
+        <footer className="modal-actions">
+          <button className="button secondary" type="button" onClick={() => setStep("intake")} disabled={creating}>Back</button>
+          <button className="button primary" type="button" onClick={createTeam} disabled={creating || draft.length === 0}>
+            {creating ? "Adding your team…" : `Add ${draft.length} agent${draft.length === 1 ? "" : "s"} to Bullpen`}
+          </button>
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="empty-state">
       <div className="empty-visual" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="empty-logo-frame"><img src={logoUrl} alt="" /></div><span className="spark spark-one">✦</span><span className="spark spark-two">✦</span></div>
       <span className="eyebrow">Welcome to Bullpen</span>
-      <h1>Build your first AI agent</h1>
-      <p>Give your agent a name, choose its specialty, and describe the job. That is all you need to get started.</p>
-      {!connection.online && <div className="connection-alert">{IS_LOCAL_DEV ? <>Start the backend with <code>npm run dev</code> before adding an agent.</> : <>Bullpen's agent service is temporarily unavailable. Please try again shortly.</>}</div>}
-      <QuickCreateAgent onCreate={onCreate} disabled={!connection.online} />
+      <h1>Tell us about your business</h1>
+      <p>We'll draft a starting team of AI agents tailored to your goal — you'll review everything before anything is created.</p>
+      {!connection.online && <div className="connection-alert">{IS_LOCAL_DEV ? <>Start the backend with <code>npm run dev</code> before continuing.</> : <>Bullpen's agent service is temporarily unavailable. Please try again shortly.</>}</div>}
+      <form className="agent-card quick-agent-card" onSubmit={submitIntake}>
+        <div className="quick-card-heading"><span className="quick-add-mark" aria-hidden="true">✦</span><div><h2>Describe your business</h2><p>Every field is required — this is what your team gets built from.</p></div></div>
+        <label className="quick-field"><span>What does your business do?</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. We run a small independent coffee roastery that sells beans online and to local cafes." /></label>
+        <label className="quick-field"><span>What do you want Bullpen to help with?</span><textarea value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. Build out our content marketing and customer engagement over the next year." /></label>
+        <label className="quick-field">
+          <span>Time horizon</span>
+          <select value={term} onChange={(event) => setTerm(event.target.value)} required>
+            <option value="short">Short-term — one specific goal</option>
+            <option value="long">Long-term — ongoing work</option>
+          </select>
+        </label>
+        <button className="button primary quick-submit" type="submit" disabled={drafting || !connection.online}>{drafting ? "Drafting your team…" : "Draft my team"}</button>
+      </form>
       <div className="empty-footnote"><span className="gemini-glyph" aria-hidden="true">✦</span>{connection.geminiConfigured ? "Gemini is ready" : "Add your Gemini API key to run agent tasks"}</div>
     </div>
   );
@@ -628,9 +738,9 @@ function AgentCard({ agent, agents, dependencyName, assignedTask, taskCount, onO
   );
 }
 
-function AgentsView({ agents, tasks, connection, onCreate, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
+function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
   const workingCount = agents.filter((agent) => agent.status === "working").length;
-  if (agents.length === 0) return <EmptyAgents onCreate={onCreate} connection={connection} />;
+  if (agents.length === 0) return <BusinessOnboarding onDraftTeam={onDraftTeam} onCreate={onCreate} connection={connection} />;
   return (
     <>
       <div className="page-heading"><div><span className="eyebrow">Your team</span><h1>Your Bullpen</h1><p>Build your roster and give every Gemini agent a clear job.</p></div></div>
@@ -925,6 +1035,18 @@ export default function App() {
     }
   }
 
+  // Drafts a starting team from the mandatory onboarding flow — returns the
+  // draft array (or null on failure) without creating anything.
+  async function draftTeamForBusiness(payload) {
+    try {
+      const { draft } = await api.draftTeamForBusiness(payload);
+      return draft;
+    } catch (error) {
+      notify(error.message);
+      return null;
+    }
+  }
+
   async function removeAgent(agent) {
     if (!window.confirm(`Remove ${agent.name} from your Bullpen?`)) return;
     try {
@@ -1102,7 +1224,7 @@ export default function App() {
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
-              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
+              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} />}
           </section>
         </main>

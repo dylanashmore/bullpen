@@ -126,7 +126,7 @@ function HomePage({ authenticated, onSignIn, onGetStarted }) {
       <section className="landing-hero">
         <div className="landing-hero-copy">
           <span className="landing-kicker"><i /> Powered by Gemini</span>
-          <h1>The AI pitchers <span>your business needs.</span></h1>
+          <h1>Build Your Bench. <span>Scale Your Business.</span></h1>
           <p>Build a specialized team of AI agents, give them work, and follow every step from assignment to final output.</p>
           <div className="landing-hero-actions">
             <button className="button primary large" type="button" onClick={onGetStarted}>{authenticated ? "Open my Bullpen" : "Create your first agent"} <span aria-hidden="true">→</span></button>

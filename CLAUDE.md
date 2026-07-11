@@ -93,16 +93,19 @@ example used in tests and docs below — just note it no longer exists until som
 ## Locked API contract
 - `GET /api/agents` → array of agent objects (`Agent.toJSON()` shape: `id, name, role,
   inputType, outputType, dependsOnAgent, tone, status, acceptsFiles, specialty, directive,
-  model, style, inspiredBy`)
+  model, style, inspiredBy, context`)
 - `POST /api/agents` → body `{ name, role, inputType, outputType, dependsOnAgent, tone,
   acceptsFiles }`, creates an agent. `name/role/inputType/outputType` required;
   `dependsOnAgent` must reference an existing agent id if provided; `acceptsFiles` optional
-  boolean, defaults to `false`. `specialty`, `directive`, `model`, `style`, and `inspiredBy`
-  are optional; `model` is validated against `SUPPORTED_AGENT_MODELS` (`src/lib/models.js`) —
-  currently just `gemini-3.5-flash`, see Tech stack above for why. Tone, style, and inspiration
-  are included in the specialist system prompt.
-- `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty }`; changes the
-  agent's model or editable instructions without recreating it.
+  boolean, defaults to `false`. `specialty`, `directive`, `model`, `style`, `inspiredBy`, and
+  `context` are optional; `model` is validated against `SUPPORTED_AGENT_MODELS`
+  (`src/lib/models.js`). Tone, style, inspiration, and context are all included in the
+  specialist system prompt — `context` (**added 2026-07-11**) is background/knowledge the agent
+  should know (company info, prior facts), kept separate from `directive` (behavioral
+  instructions).
+- `PATCH /api/agents/:id` → body may contain `{ model, directive, specialty, context }`;
+  changes the agent's model or editable instructions without recreating it. `context` accepts
+  a string or `null` to clear it.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
@@ -236,14 +239,24 @@ truth; both backend stores are in memory and reset when the backend restarts.
 
 **Agent creation flow (current):** the "New agent" / `QuickCreateAgent` form has a Specialty
 dropdown (Research / Writing / Software development / Data analysis / Customer support /
-Project management / "Create your own…" for a free-text specialty), an "Advanced setup" section
-(input/output type, `dependsOnAgent`, style), an "Accept file uploads" checkbox (disabled
-whenever `dependsOnAgent` is set, matching the backend rule that only entry-point agents can
-receive a file), and a Gemini model slider (`ModelSlider`, see the model-tier note in Tech stack
-above for why all three positions currently resolve to the same model). Everything submits via
-`POST /api/agents`. Since there's no seeded starter roster anymore (see "Core concept" above),
-every agent — including a `writer → designer → artist`-style pipeline — has to be built through
-this form from a completely empty roster on first sign-in.
+Project management / "Create your own…" for a free-text specialty), a required "How should this
+agent work?" directive field, an optional "Context" field (**added 2026-07-11** — background/
+knowledge the agent should know, distinct from the directive; see `context` in the API contract
+above), an "Advanced setup" section (input/output type, `dependsOnAgent`, tone, style,
+inspired-by), an "Accept file uploads" checkbox (disabled whenever `dependsOnAgent` is set,
+matching the backend rule that only entry-point agents can receive a file), and a Gemini model
+slider (`ModelSlider`). Everything submits via `POST /api/agents`. Since there's no seeded
+starter roster anymore (see "Core concept" above), every agent — including a
+`writer → designer → artist`-style pipeline — has to be built through this form from a
+completely empty roster on first sign-in.
+
+**Agent card layout (current):** `AgentCard` keeps the header, today's-task/current-process
+status boxes, assign button, model slider, and footer always visible, but both the "Instructions"
+block and the "Agent setup" summary (**Instructions collapsed added 2026-07-11**, matching the
+setup summary's existing pattern) are `<details>` elements collapsed by default — each shows a
+one-line preview in its `<summary>` and expands on click. This keeps the default card height
+down without removing any functionality; editing instructions still works the same way, just
+inside the expanded panel.
 
 ## Keeping this file accurate
 Update this file whenever the API contract or the file structure above actually changes — not

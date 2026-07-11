@@ -53,6 +53,7 @@ export async function addAgent(
     model = DEFAULT_AGENT_MODEL,
     style = null,
     inspiredBy = null,
+    context = null,
   },
   explicitId
 ) {
@@ -72,6 +73,7 @@ export async function addAgent(
     model,
     style,
     inspiredBy,
+    context,
   });
   if (isPersistent) {
     await redis.set(agentKey(id), JSON.stringify(agent.toJSON()));

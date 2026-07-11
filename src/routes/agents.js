@@ -53,6 +53,7 @@ router.post('/', async (req, res) => {
       model: body.model ?? DEFAULT_AGENT_MODEL,
       style: body.style ?? null,
       inspiredBy: body.inspiredBy ?? null,
+      context: body.context ?? null,
     });
     res.status(201).json(agent.toJSON());
   } catch (err) {
@@ -93,7 +94,15 @@ router.patch('/:id', async (req, res) => {
       changed = true;
     }
 
-    if (!changed) return res.status(400).json({ error: 'Provide model, directive, or specialty to update' });
+    if (body.context !== undefined) {
+      if (body.context !== null && typeof body.context !== 'string') {
+        return res.status(400).json({ error: 'context must be a string or null' });
+      }
+      agent.context = typeof body.context === 'string' ? body.context.trim() || null : null;
+      changed = true;
+    }
+
+    if (!changed) return res.status(400).json({ error: 'Provide model, directive, specialty, or context to update' });
 
     await saveAgent(agent);
     res.json(agent.toJSON());

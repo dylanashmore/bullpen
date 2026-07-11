@@ -17,6 +17,7 @@ export class Agent {
     model = DEFAULT_AGENT_MODEL,
     style = null,
     inspiredBy = null,
+    context = null,
   }) {
     if (!VALID_OUTPUT_TYPES.has(outputType)) {
       throw new Error(`Invalid outputType "${outputType}". Must be one of: ${[...VALID_OUTPUT_TYPES].join(', ')}`);
@@ -35,6 +36,7 @@ export class Agent {
     this.model = model;
     this.style = style;
     this.inspiredBy = inspiredBy;
+    this.context = context;
   }
 
   buildSystemPrompt() {
@@ -42,6 +44,9 @@ export class Agent {
       `You are ${this.name}, a specialist AI agent.`,
       `Your role: ${this.role}`,
     ];
+    if (this.context) {
+      lines.push(`Background context: ${this.context}`);
+    }
     if (this.tone) {
       lines.push(`Tone: ${this.tone}.`);
     }
@@ -94,6 +99,7 @@ export class Agent {
       model: this.model,
       style: this.style,
       inspiredBy: this.inspiredBy,
+      context: this.context,
     };
   }
 }

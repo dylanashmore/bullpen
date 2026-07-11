@@ -1,7 +1,9 @@
 import { GoogleGenAI, FunctionCallingConfigMode, createUserContent, createPartFromUri } from '@google/genai';
 import { DEFAULT_AGENT_MODEL } from './models.js';
 
-const ORCHESTRATOR_MODEL = 'gemini-2.5-flash';
+// Not slider-controlled (unlike per-agent calls, which use agent.model) —
+// see the comment in src/lib/models.js on why this is gemini-3.5-flash now.
+const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;

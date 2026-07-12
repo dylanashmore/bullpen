@@ -34,14 +34,14 @@ function isTransientError(err) {
   return /"code":\s*503|UNAVAILABLE|high demand/i.test(String(err?.message || err));
 }
 
-async function generateContentWithRetry(request) {
+async function generateContentWithRetry(request, { maxRetries = TRANSIENT_ERROR_MAX_RETRIES } = {}) {
   let lastErr;
-  for (let attempt = 0; attempt <= TRANSIENT_ERROR_MAX_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
       return await getClient().models.generateContent(request);
     } catch (err) {
       lastErr = err;
-      if (attempt >= TRANSIENT_ERROR_MAX_RETRIES || !isTransientError(err)) throw err;
+      if (attempt >= maxRetries || !isTransientError(err)) throw err;
       await sleep(TRANSIENT_ERROR_RETRY_DELAY_MS * (attempt + 1));
     }
   }
@@ -73,13 +73,16 @@ async function uploadFileAndWaitUntilActive({ buffer, mimeType, name }) {
   return file;
 }
 
-// Every specialist agent call gets real web access: urlContext lets the model
-// fetch and read specific URLs mentioned in its input (e.g. "summarize the
-// reviews at this link"), googleSearch lets it ground answers in current
-// live search results instead of only training-data knowledge. Both are
-// confirmed (2026-07-11, tested directly against the API) to work fine
-// alongside responseSchema/JSON mode, which runAgentPromptPhase depends on.
+// Thorough mode always has web access. Fast mode enables it only when the task
+// or the agent's job clearly calls for URLs, research, sources, or current
+// information, avoiding unnecessary tool round-trips for ordinary writing.
 const WEB_ACCESS_TOOLS = [{ urlContext: {} }, { googleSearch: {} }];
+const WEB_ACCESS_PATTERN = /https?:\/\/|www\.|\b(?:current|currently|latest|today|recent|news|search|research|look up|online|verify|sources?|citations?|reviews?|market data|weather|price)\b/i;
+
+export function shouldUseWebAccess(agent, input, executionMode) {
+  if (executionMode === 'thorough') return true;
+  return WEB_ACCESS_PATTERN.test(`${input}\n${agent.role || ''}\n${agent.directive || ''}\n${agent.specialty || ''}`);
+}
 
 const PHASE_RESPONSE_SCHEMA = {
   type: 'object',
@@ -104,7 +107,7 @@ const PHASE_RESPONSE_SCHEMA = {
   required: ['phase', 'content'],
 };
 
-const PHASE_OUTPUT_TOKEN_LIMIT = 16384;
+const OUTPUT_TOKEN_LIMITS = { fast: 8192, thorough: 16384 };
 
 // Runs one phase of a multi-phase agent execution, asking Gemini to both do
 // the phase's work AND self-report a short task-specific label for what it
@@ -117,9 +120,19 @@ const PHASE_OUTPUT_TOKEN_LIMIT = 16384;
 // there's no separate "image agent" outputType anymore (removed 2026-07-11).
 // The caller (runChain in orchestrator.js) is what actually calls the image
 // generator when needsImage comes back true.
-export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhases, previousContent, file }) {
+export async function runAgentPromptPhase(agent, {
+  input,
+  phaseNumber,
+  totalPhases,
+  previousContent,
+  file,
+  executionMode = 'fast',
+}) {
   try {
-    const phaseInstruction = phaseNumber === 1
+    const phaseInstruction = totalPhases === 1
+      ? `Complete the following task and produce the finished answer to hand back. Be direct and concise while ` +
+        `fully satisfying every stated requirement.\n\nTask input:\n${input}`
+      : phaseNumber === 1
       ? `This is phase ${phaseNumber} of ${totalPhases} of this task — do the natural first part of the work only ` +
         `(e.g. gathering, researching, or drafting raw material), not the final polished answer. Produce exactly ` +
         `ONE version of this phase's work, not multiple alternative drafts/options to choose between, and keep ` +
@@ -138,19 +151,21 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
     // which produced malformed/rambling `content` values in testing. This
     // supersedes it: the "no meta-commentary" rule now applies to `content`,
     // and the JSON wrapper is explained as separate infrastructure.
-    const systemInstruction = `${agent.buildSystemPrompt()}\n\nYou have real web access: fetch and read specific ` +
-      'URLs mentioned in your input, and use live search for anything current or outside your training data. ' +
-      'Use them whenever they would make your answer more accurate — do not guess or fabricate when you could ' +
-      'look it up instead.\n\nYou can also request a generated image instead of (or as) your final answer: if ' +
+    const useWebAccess = shouldUseWebAccess(agent, input, executionMode);
+    const webInstruction = useWebAccess
+      ? '\n\nYou have real web access: fetch URLs mentioned in the input and use live search when it improves accuracy. Do not fabricate information you can verify.'
+      : '';
+    const imageInstruction = '\n\nYou can also request a generated image instead of (or as) your final answer: if ' +
       `this is your final phase (phase ${phaseNumber} of ${totalPhases}) and the task is best answered with a ` +
       'picture, logo, illustration, diagram, or visual design rather than words, set needsImage to true and ' +
       'imagePrompt to a detailed, self-contained description of exactly what to generate. Only decide this on ' +
       'your final phase — leave needsImage false on every earlier phase, and leave it false whenever a normal ' +
-      'text/structured answer is what the task actually calls for; most tasks do not need an image.\n\nYou are ' +
-      'running as one phase of a multi-phase pipeline. Respond with ONLY the required JSON object (phase, ' +
-      'content, and needsImage/imagePrompt when applicable) — no markdown code fences around it, no text outside ' +
-      'it. The "content" field is where the "respond with only the requested output itself" rule above applies: ' +
-      'it must contain your actual output for this phase and nothing about the JSON structure, schema, or formatting.';
+      'text/structured answer is what the task actually calls for; most tasks do not need an image.';
+    const systemInstruction = `${agent.buildSystemPrompt()}${webInstruction}${imageInstruction}\n\nRespond with ` +
+      'ONLY the required JSON object (phase, content, and needsImage/imagePrompt when applicable) — no markdown ' +
+      'code fences around it, no text outside it. The "content" field is where the "respond with only the ' +
+      'requested output itself" rule above applies: it must contain your actual output for this phase and ' +
+      'nothing about the JSON structure, schema, or formatting.';
 
     const response = await generateContentWithRetry({
       model: agent.model || DEFAULT_AGENT_MODEL,
@@ -159,10 +174,10 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: PHASE_RESPONSE_SCHEMA,
-        maxOutputTokens: PHASE_OUTPUT_TOKEN_LIMIT,
-        tools: WEB_ACCESS_TOOLS,
+        maxOutputTokens: OUTPUT_TOKEN_LIMITS[executionMode] || OUTPUT_TOKEN_LIMITS.fast,
+        ...(useWebAccess ? { tools: WEB_ACCESS_TOOLS } : {}),
       },
-    });
+    }, { maxRetries: executionMode === 'fast' ? 1 : TRANSIENT_ERROR_MAX_RETRIES });
     if (!response.text) {
       throw new Error(`Gemini returned an empty response (finishReason: ${response.candidates?.[0]?.finishReason ?? 'unknown'})`);
     }

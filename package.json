@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "build": "npm --prefix frontend run build",
-    "test:api": "node scripts/test-requests.js"
+    "test:api": "node scripts/test-requests.js",
+    "test:execution-modes": "node scripts/test-execution-modes.js"
   },
   "dependencies": {
     "@google/genai": "^2.11.0",

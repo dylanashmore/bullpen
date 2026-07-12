@@ -99,44 +99,47 @@ example used in tests and docs below — just note it no longer exists until som
   sequential ordering *and* gives independent agents parallel execution for free — there's a
   single code path for single-agent, multi-step pipeline, and parallel-branch tasks.
 
-## Phased execution (added 2026-07-11)
-Every agent step now runs as `TEXT_AGENT_PHASES` (currently 2) sequential Gemini calls instead
-of one, via `runAgentPromptPhase()` in `geminiClient.js`, called in a loop from `runChain()` in
-`orchestrator.js`. This is what powers `step.phase` in the API contract above — real per-task
-phase labels (e.g. "Gathering" then "Summarizing") rather than a static "Working" the whole
-time. Mechanics:
+## Execution modes and phases (updated 2026-07-11)
+Every task has `executionMode: "fast" | "thorough"` (default `"fast"`). Fast makes one Gemini
+call per agent step, uses an 8,192-token ceiling, retries one transient 503, and only enables web
+tools when the input or agent definition signals that they are needed. Thorough makes two
+sequential calls (gather, then refine), a 16,384-token ceiling, two transient retries, and
+always-on web tools. Both modes run through `runAgentPromptPhase()` in `geminiClient.js`, called
+from `runChain()` in `orchestrator.js`; `getTextAgentPhaseCount(executionMode)` in
+`orchestrator.js` resolves the phase count (`{ fast: 1, thorough: 2 }`). Mechanics:
 - Each call asks Gemini for structured JSON output (`responseMimeType: 'application/json'`,
   a `{ phase, content, needsImage?, imagePrompt? }` schema) — the model picks its own short
   gerund label for what that phase is doing, specific to the task at hand, not a hardcoded list.
-- Phase 1's prompt asks for "the natural first part of the work" (research/gathering/drafting);
-  the final phase's prompt hands back phase 1's `content` as context and asks for the finished
-  answer. Only the *last* phase's `content` becomes the step's actual `output` (unless it flags
-  `needsImage` — see "Automatic image generation" below) — earlier phases' content is
-  intermediate work product, never shown to the user directly.
+- Fast asks for the finished answer in its one call. Thorough phase 1 asks for "the natural first
+  part of the work" (research/gathering/drafting); its final phase receives phase 1's `content`
+  and produces the finished answer. Only the last phase becomes the step's actual `output`
+  (unless it flags `needsImage` — see "Automatic image generation" below).
 - `step.phase` is written back to the store (`saveTask`) after every phase completes, so
   `GET /api/tasks` reflects the current phase mid-execution, not just at the end.
-- Cost/latency tradeoff: this roughly doubles Gemini calls (and therefore latency and token
-  spend) for every agent step. Accepted as worthwhile for the demo; revisit
-  `TEXT_AGENT_PHASES` if either becomes a problem.
+- Cost/latency tradeoff is user-controlled in the task dialog (Fast vs Thorough) instead of
+  imposed globally.
 
 ## Automatic image generation (added 2026-07-11, replaces the old `outputType: 'image'`)
 There is no more dedicated "image agent" you designate at creation time. Instead, every agent's
-**final** phase call can flag `needsImage: true` (plus an `imagePrompt` string) in its structured
-JSON response when Gemini itself judges the task is best answered with a generated image — a
-picture, logo, illustration, diagram, or design mockup — rather than text/structured content.
-The instruction telling the model about this capability, and to only decide it on the final
-phase, lives in `runAgentPromptPhase()`'s `systemInstruction` in `geminiClient.js`. When
-`runChain()` (`orchestrator.js`) sees `needsImage` come back true from the final phase, it sets
-`step.phase = 'Generating image'`, calls `generateImage(imagePrompt || <the phase's text
-content>)` (`imagenClient.js`, unchanged — still Imagen), and uses *that* as the step's `output`
-instead of the text `content`. Any agent can end up producing an image on one task and plain
-text on the next; there's nothing on the `Agent` object that predicts which. The frontend needed
-no changes for this — `StepOutput` already renders `output` as an `<img>` whenever it's a
-`data:image/...` string and as text otherwise, regardless of *why* it ended up that way.
+**final** phase call (phase 1 in Fast mode, phase 2 in Thorough) can flag `needsImage: true`
+(plus an `imagePrompt` string) in its structured JSON response when Gemini itself judges the task
+is best answered with a generated image — a picture, logo, illustration, diagram, or design
+mockup — rather than text/structured content. The instruction telling the model about this
+capability, and to only decide it on the final phase, lives in `runAgentPromptPhase()`'s
+`systemInstruction` in `geminiClient.js`. When `runChain()` (`orchestrator.js`) sees `needsImage`
+come back true from the final phase, it sets `step.phase = 'Generating image'`, calls
+`generateImage(imagePrompt || <the phase's text content>)` (`imagenClient.js`, unchanged — still
+Imagen), and uses *that* as the step's `output` instead of the text `content`. Any agent can end
+up producing an image on one task and plain text on the next; there's nothing on the `Agent`
+object that predicts which. The frontend needed no changes for this — `StepOutput` already
+renders `output` as an `<img>` whenever it's a `data:image/...` string and as text otherwise,
+regardless of *why* it ended up that way.
 
-**Web access (added 2026-07-11):** every `runAgentPromptPhase()` call passes
-`tools: [{ urlContext: {} }, { googleSearch: {} }]` — real Gemini API tools, not agent-to-agent
-function calling (that's a separate `tools` config, only used by `askOrchestrator()` for routing).
+**Web access (updated 2026-07-11):** Thorough always passes
+`tools: [{ urlContext: {} }, { googleSearch: {} }]`; Fast passes them only when
+`shouldUseWebAccess()` (`geminiClient.js`) detects a URL, research/current-information language,
+or a research role. These are real Gemini API tools, not agent-to-agent function calling (that's
+a separate `tools` config, only used by `askOrchestrator()` for routing).
 `urlContext` lets the model fetch and read specific URLs mentioned in its input (e.g. "summarize
 the reviews at this link"); `googleSearch` grounds answers in live search results instead of only
 training-data knowledge. Confirmed compatible with `responseSchema`/JSON mode by testing directly
@@ -205,8 +208,8 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   auto-merge would degrade it for the whole team, not just the person who gave the feedback.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
-- `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, status, steps[],
-  createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
+- `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, executionMode, status,
+  steps[], createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
   one of `pending|working|done|error|cancelled`. `phase` (**added 2026-07-11**, string, only
   present once a text/structured/feedback agent's first phase completes) is a short task-specific
   gerund label — "Gathering", "Summarizing", etc — self-reported by the model each phase; see
@@ -217,10 +220,11 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   `steps` and `status: "pending"`. Execution (routing + running each agent) continues
   asynchronously; the frontend polls `GET /api/tasks` to watch `steps` fill in and `status`
   progress to `working` → `done`/`error`. Two ways to call it, both still supported:
-  - `Content-Type: application/json`, body `{ input: "...", agentId?: "writer" }` — no
+  - `Content-Type: application/json`, body `{ input: "...", agentId?: "writer",
+    executionMode?: "fast" | "thorough" }` — no
     attachment. When `agentId` is supplied, the task targets that agent and automatically
     includes its declared upstream dependencies; without it, Gemini chooses the chain.
-  - `Content-Type: multipart/form-data`, fields `input` (text) and `file` (the upload) — for
+  - `Content-Type: multipart/form-data`, fields `input`, optional `executionMode`, and `file` — for
     tasks with an attachment. `input` is still required and validated the same way either way.
     Max upload size 20MB, one file per task. The response's `file` field reflects what was
     attached (or `null` for the JSON path).
@@ -251,16 +255,22 @@ src/
                          empty on every boot.
   lib/
     models.js          — supported per-agent Gemini model ids and default model
+    executionModes.js  — EXECUTION_MODES (`['fast', 'thorough']`), DEFAULT_EXECUTION_MODE
+                         (`'fast'`), isExecutionMode() validator — see "Execution modes and
+                         phases" above
     geminiClient.js    — runAgentPromptPhase() (one phase of a specialist agent's multi-phase
-                         execution, optionally attaches a file via the Gemini Files API, real
-                         web/search tools, JSON-schema output), optimizeText() (the "Optimize
-                         with Gemini" rewrite), generateContentWithRetry() (retries transient
-                         Gemini 503s), askOrchestrator() (routing via function calling),
-                         suggestContextFromFeedback() (drafts a context update from step
-                         feedback, or null if nothing durable), draftTeamForBusiness() (drafts a
-                         starting roster for the mandatory onboarding flow, structured JSON
-                         output) — none of the draft/suggestion calls run automatically
-    imagenClient.js    — generateImage(), returns a data:image/png;base64,... string
+                         execution — 1 phase in fast mode, 2 in thorough; optionally attaches a
+                         file via the Gemini Files API; conditional web/search tools via
+                         shouldUseWebAccess(); JSON-schema output including needsImage/
+                         imagePrompt), optimizeText() (the "Optimize with Gemini" rewrite),
+                         generateContentWithRetry() (retries transient Gemini 503s, retry count
+                         varies by execution mode), askOrchestrator() (routing via function
+                         calling), suggestContextFromFeedback() (drafts a context update from
+                         step feedback, or null if nothing durable), draftTeamForBusiness()
+                         (drafts a starting roster for the mandatory onboarding flow, structured
+                         JSON output) — none of the draft/suggestion calls run automatically
+    imagenClient.js    — generateImage(), returns a data:image/png;base64,... string, called
+                         from runChain() whenever an agent's final phase flags needsImage
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
                          or null if neither is set; agentStore/taskStore both branch on this
     taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
@@ -268,7 +278,9 @@ src/
                          outright), Redis-backed via persistence.js with an in-memory fallback
   orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
-                         an optional file buffer to accepting root agents)
+                         an optional file buffer to accepting root agents, generates an image
+                         mid-step whenever a phase flags needsImage), getTextAgentPhaseCount()
+                         (resolves phase count from a task's executionMode)
   routes/
     agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation; POST /:id/feedback
                          drafts a context suggestion from feedback without persisting it;
@@ -438,6 +450,13 @@ instead of leaving you on a "Task not found" page.
 for the agent's future behavior, the closest semantic fit of the two existing `kind` values —
 no new backend `kind` was added). Same "rewrite in place, no preview step" behavior as everywhere
 else `OptimizeButton` is used.
+
+**Execution mode picker (current, added 2026-07-11):** `TaskDialog` has a Fast/Thorough radio
+group (`executionModes` array — id, label, one-line description) below the task-input field,
+defaulting to `"fast"` and reset on every dialog open. The chosen mode is submitted as
+`executionMode` on `POST /api/tasks` (both the JSON and multipart paths — see "Execution modes
+and phases" above) and echoed back on the task; `TaskCard` and `TaskListRow` both show a
+"Fast"/"Thorough" label in their meta line when `task.executionMode` is present.
 
 ## Keeping this file accurate
 Update this file whenever the API contract or the file structure above actually changes — not

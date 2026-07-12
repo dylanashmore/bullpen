@@ -48,6 +48,10 @@ const geminiModels = [
 ];
 
 const DEFAULT_MODEL = "gemini-3.5-flash";
+const executionModes = [
+  { id: "fast", label: "Fast", description: "One pass · web only when needed" },
+  { id: "thorough", label: "Thorough", description: "Two passes · full web access" },
+];
 
 function initials(name) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -880,11 +884,12 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
 
 function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete }) {
   const status = task.status || "pending";
+  const executionModeLabel = task.executionMode === "thorough" ? "Thorough" : task.executionMode === "fast" ? "Fast" : null;
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
     <article className={`task-card ${status}`}>
       <div className="task-card-head">
-        <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
+        <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
         <div className="task-card-head-actions">
           <span className={`task-status ${status}`}>{status}</span>
           {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task"><TrashIcon /></button>}
@@ -918,6 +923,7 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete })
 // the delete action are separate sibling buttons inside a plain row.
 function TaskListRow({ task, agents, onOpen, onDelete }) {
   const status = task.status || "pending";
+  const executionModeLabel = task.executionMode === "thorough" ? "Thorough" : task.executionMode === "fast" ? "Fast" : null;
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
   return (
     <div className={`task-row ${status}`}>
@@ -925,7 +931,7 @@ function TaskListRow({ task, agents, onOpen, onDelete }) {
         <span className={`history-status ${status}`} aria-hidden="true" />
         <span className="task-row-copy">
           <strong>{task.input}</strong>
-          <small>{formatDate(task.createdAt)}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</small>
+          <small>{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</small>
         </span>
         <span className={`task-status ${status}`}>{status}</span>
       </button>
@@ -981,6 +987,7 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
   const dialogRef = useRef(null);
   const [input, setInput] = useState("");
   const [file, setFile] = useState(null);
+  const [executionMode, setExecutionMode] = useState("fast");
   const [submitting, setSubmitting] = useState(false);
   useDialog(open, dialogRef);
 
@@ -988,13 +995,14 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
     if (!open) return;
     setInput("");
     setFile(null);
+    setExecutionMode("fast");
     setSubmitting(false);
   }, [open]);
 
   async function submit(event) {
     event.preventDefault();
     setSubmitting(true);
-    const created = await onCreate({ input: input.trim(), file, agentId: targetAgent?.id || null });
+    const created = await onCreate({ input: input.trim(), file, executionMode, agentId: targetAgent?.id || null });
     setSubmitting(false);
     if (created) onClose();
   }
@@ -1006,6 +1014,17 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
         <p className="modal-helper">{targetAgent ? `This task goes directly to ${targetAgent.name}. Any required upstream agents will be included automatically.` : "The orchestrator will choose the right agent or build a multi-agent pipeline for you."}</p>
         <label className="field"><span>What do you need?</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows="5" required maxLength="2000" placeholder="e.g. Research our market and write a launch announcement." /></label>
         <OptimizeButton text={input} kind="task_input" onOptimized={setInput} disabled={submitting} />
+        <fieldset className="execution-mode-control" disabled={submitting}>
+          <legend>Execution mode</legend>
+          <div className="execution-mode-options">
+            {executionModes.map((mode) => (
+              <label className={executionMode === mode.id ? "selected" : ""} key={mode.id}>
+                <input type="radio" name="executionMode" value={mode.id} checked={executionMode === mode.id} onChange={() => setExecutionMode(mode.id)} />
+                <span><strong>{mode.label}</strong><small>{mode.description}</small></span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <label className="field"><span>Attachment <small>Optional · max 20MB</small></span><input type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
         {!canRun && <div className="task-warning">Add your Gemini API key and restart the backend before running a task.</div>}
         <footer className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" type="submit" disabled={!canRun || submitting}>{submitting ? "Sending…" : "Run task"}</button></footer>

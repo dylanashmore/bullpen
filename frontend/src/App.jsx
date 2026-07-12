@@ -481,7 +481,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
 // anything gets created. Nothing is created during drafting itself; each kept
 // row goes through the completely ordinary onCreate (POST /api/agents) path,
 // one at a time, only when the user confirms.
-function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
+function BusinessOnboarding({ onDraftTeam, onCreate, onSaveProfile, connection }) {
   const [step, setStep] = useState("intake"); // "intake" | "reviewing"
   const [description, setDescription] = useState("");
   const [goal, setGoal] = useState("");
@@ -535,6 +535,13 @@ function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
         context: item.context.trim() || null,
       });
     }
+    // Persisted once the team is actually created, not at draft time — same
+    // "nothing sticks until confirmed" rule the drafted agents themselves
+    // follow. Without this the description/goal typed here were previously
+    // discarded the moment this component unmounted; now they're editable
+    // afterward from the agents page (BusinessProfileCard) and available for
+    // future task-suggestion logic to read.
+    await onSaveProfile({ description: description.trim(), goal: goal.trim(), term });
     setCreating(false);
   }
 
@@ -584,7 +591,9 @@ function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
       <form className="agent-card quick-agent-card" onSubmit={submitIntake}>
         <div className="quick-card-heading"><span className="quick-add-mark" aria-hidden="true">✦</span><div><h2>Describe your business</h2><p>Every field is required — this is what your team gets built from.</p></div></div>
         <label className="quick-field"><span>What does your business do?</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. We run a small independent coffee roastery that sells beans online and to local cafes." /></label>
+        <OptimizeButton text={description} kind="business_context" onOptimized={setDescription} disabled={drafting} />
         <label className="quick-field"><span>What do you want Bullpen to help with?</span><textarea value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. Build out our content marketing and customer engagement over the next year." /></label>
+        <OptimizeButton text={goal} kind="business_context" onOptimized={setGoal} disabled={drafting} />
         <label className="quick-field">
           <span>Time horizon</span>
           <select value={term} onChange={(event) => setTerm(event.target.value)} required>
@@ -808,9 +817,81 @@ function AgentCard({ agent, agents, dependencyName, assignedTask, taskCount, onO
   );
 }
 
-function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
+// The description/goal/term captured once during onboarding, persisted and
+// editable afterward — previously only ever used transiently to draft the
+// starting team, then discarded. Shown above the roster once at least one
+// agent exists (BusinessOnboarding owns the identical intake form for the
+// zero-agent case). Same view/edit toggle pattern as AgentSetupSummary.
+function BusinessProfileCard({ profile, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [description, setDescription] = useState(profile?.description || "");
+  const [goal, setGoal] = useState(profile?.goal || "");
+  const [term, setTerm] = useState(profile?.term || "short");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDescription(profile?.description || "");
+      setGoal(profile?.goal || "");
+      setTerm(profile?.term || "short");
+    }
+  }, [profile, editing]);
+
+  async function save(event) {
+    event.preventDefault();
+    if (!description.trim() || !goal.trim()) return;
+    setSaving(true);
+    const ok = await onSave({ description: description.trim(), goal: goal.trim(), term });
+    setSaving(false);
+    if (ok) setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <form className="business-profile-card editing" onSubmit={save}>
+        <div className="business-profile-heading"><span className="eyebrow">Business context</span><h2>{profile ? "Edit your business profile" : "Add your business profile"}</h2></div>
+        <label className="quick-field full-width"><span>What does your business do?</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. We run a small independent coffee roastery that sells beans online and to local cafes." /></label>
+        <OptimizeButton text={description} kind="business_context" onOptimized={setDescription} disabled={saving} />
+        <label className="quick-field full-width"><span>What do you want Bullpen to help with?</span><textarea value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength="500" rows="3" placeholder="e.g. Build out our content marketing and customer engagement over the next year." /></label>
+        <OptimizeButton text={goal} kind="business_context" onOptimized={setGoal} disabled={saving} />
+        <label className="quick-field"><span>Time horizon</span>
+          <select value={term} onChange={(event) => setTerm(event.target.value)}>
+            <option value="short">Short-term — one specific goal</option>
+            <option value="long">Long-term — ongoing work</option>
+          </select>
+        </label>
+        <div className="agent-instructions-actions">
+          <button type="button" onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
+          <button className="save" type="submit" disabled={saving || !description.trim() || !goal.trim()}>{saving ? "Saving…" : "Save"}</button>
+        </div>
+      </form>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="business-profile-card empty">
+        <div className="business-profile-heading"><span className="eyebrow">Business context</span><h2>No business profile yet</h2></div>
+        <p className="business-profile-empty-copy">Add a description and goal so future task suggestions can take your business into account.</p>
+        <button type="button" className="edit-setup-button" onClick={() => setEditing(true)}>Add business profile</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="business-profile-card">
+      <div className="business-profile-heading"><span className="eyebrow">Business context</span><h2>Your business</h2></div>
+      <p><span>What you do</span><strong>{profile.description}</strong></p>
+      <p><span>Goal</span><strong>{profile.goal}</strong></p>
+      <p><span>Horizon</span><strong>{profile.term === "long" ? "Long-term" : "Short-term"}</strong></p>
+      <button type="button" className="edit-setup-button" onClick={() => setEditing(true)}>Edit</button>
+    </div>
+  );
+}
+
+function AgentsView({ agents, tasks, connection, businessProfile, onSaveProfile, onCreate, onDraftTeam, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
   const workingCount = agents.filter((agent) => agent.status === "working").length;
-  if (agents.length === 0) return <BusinessOnboarding onDraftTeam={onDraftTeam} onCreate={onCreate} connection={connection} />;
+  if (agents.length === 0) return <BusinessOnboarding onDraftTeam={onDraftTeam} onCreate={onCreate} onSaveProfile={onSaveProfile} connection={connection} />;
   return (
     <>
       <div className="page-heading"><div><span className="eyebrow">Your team</span><h1>Your Bullpen</h1><p>Build your roster and give every Gemini agent a clear job.</p></div></div>
@@ -820,6 +901,7 @@ function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onOpenTa
         <div className="summary-item"><span className="summary-value">{workingCount}</span><span className="summary-label">Working now</span></div>
         <div className="summary-message"><span className="gemini-glyph" aria-hidden="true">✦</span><span>{connection.geminiConfigured ? "Gemini ready" : "API key needed"}</span></div>
       </div>
+      <BusinessProfileCard profile={businessProfile} onSave={onSaveProfile} />
       <div className="agent-grid">
         <QuickCreateAgent availableAgents={agents} onCreate={onCreate} disabled={!connection.online} />
         {agents.map((agent) => {
@@ -1175,6 +1257,7 @@ function Toast({ message }) {
 export default function App() {
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [businessProfile, setBusinessProfile] = useState(null);
   const [connection, setConnection] = useState({ online: false, geminiConfigured: false });
   const [loading, setLoading] = useState(true);
   const [showIntro, setShowIntro] = useState(shouldShowIntro);
@@ -1198,11 +1281,12 @@ export default function App() {
       if (refreshing) return;
       refreshing = true;
       try {
-        const [health, nextAgents, nextTasks] = await Promise.all([api.health(), api.getAgents(), api.getTasks()]);
+        const [health, nextAgents, nextTasks, nextProfile] = await Promise.all([api.health(), api.getAgents(), api.getTasks(), api.getBusinessProfile()]);
         if (!cancelled) {
           setConnection({ online: true, geminiConfigured: Boolean(health.geminiConfigured) });
           setAgents(nextAgents);
           setTasks(nextTasks);
+          setBusinessProfile(nextProfile);
         }
       } catch {
         if (!cancelled) setConnection({ online: false, geminiConfigured: false });
@@ -1289,6 +1373,17 @@ export default function App() {
     } catch (error) {
       notify(error.message);
       return null;
+    }
+  }
+
+  async function saveBusinessProfile(fields) {
+    try {
+      const updated = await api.saveBusinessProfile(fields);
+      setBusinessProfile(updated);
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
     }
   }
 
@@ -1496,7 +1591,7 @@ export default function App() {
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
-              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
+              ? <AgentsView agents={agents} tasks={tasks} connection={connection} businessProfile={businessProfile} onSaveProfile={saveBusinessProfile} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : view === "task-detail"
                 ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onIterate={iterateStep} onDelete={deleteTask} />
                 : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} onDelete={deleteTask} />}

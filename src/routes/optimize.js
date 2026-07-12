@@ -3,10 +3,12 @@ import { optimizeText } from '../lib/geminiClient.js';
 
 const router = Router();
 
-const VALID_KINDS = ['agent_directive', 'task_input'];
+const VALID_KINDS = ['agent_directive', 'task_input', 'business_context'];
 
-// Powers the "Optimize with Gemini" buttons on the agent-creation/instructions
-// forms and the task dialog — rewrites the given text in place, no preview step.
+// Powers every "Optimize with Gemini" button in the app — agent-creation/
+// instructions/context forms, the task dialog, step feedback and iteration,
+// and the business profile (description/goal) — rewrites the given text in
+// place, no preview step.
 router.post('/', async (req, res) => {
   const { text, kind } = req.body ?? {};
   if (!text || typeof text !== 'string' || !text.trim()) {

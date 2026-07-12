@@ -217,14 +217,20 @@ export async function runAgentPromptPhase(agent, {
   }
 }
 
-// Rewrites free-form user text (an agent's directive, or a task prompt) into
-// a clearer, more effective version via Gemini — powers the "Optimize with
-// Gemini" buttons on the agent-creation form and the task dialog.
+// Rewrites free-form user text (an agent's directive, a task prompt, or a
+// business description/goal) into a clearer, more effective version via
+// Gemini — powers every "Optimize with Gemini" button in the app.
 export async function optimizeText(text, kind) {
   const instructions = kind === 'agent_directive'
     ? 'Rewrite the following instructions for an AI agent so they are clearer, more specific, and more effective ' +
       'at guiding that agent\'s behavior. Preserve the original intent and keep it roughly the same length. ' +
       'Respond with only the rewritten instructions — no preamble, no quotes, no commentary.'
+    : kind === 'business_context'
+    ? 'Rewrite the following text for clarity and concision — it is a factual description of a business or a ' +
+      'stated goal, NOT a task or request to be carried out. Preserve every fact and detail actually stated; do ' +
+      'not invent new ones, do not turn it into an instruction, a strategy document, or a list of ' +
+      'recommendations, and do not respond as if you were being asked to do something. Keep it roughly the same ' +
+      'length. Respond with only the rewritten text — no preamble, no quotes, no commentary.'
     : 'Rewrite the following task prompt so it is clearer, more specific, and more likely to get a high-quality ' +
       'result from an AI agent. Preserve the original intent. Respond with only the rewritten prompt — no ' +
       'preamble, no quotes, no commentary.';

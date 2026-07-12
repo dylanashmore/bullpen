@@ -223,6 +223,18 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   `context` pre-filled with the business background. Returns `{ draft: [{ name, role,
   specialty, inputType, outputType, tone, context }, ...] }`. Powers the mandatory onboarding
   flow — see "Frontend" below.
+- `GET /api/business-profile` / `PATCH /api/business-profile` (**added 2026-07-11**) → a single
+  global record — `{ description, goal, term, updatedAt } | null` — this app has no per-user/
+  multi-tenant concept (one shared roster), so there's exactly one profile, not a collection.
+  `GET` returns `null` until the first `PATCH`. `PATCH` body is a **partial** update — any subset
+  of `{ description, goal, term }`, at least one required, each non-empty when provided; `term`
+  must be `"short"` or `"long"`; upserts (works whether or not a profile exists yet) and always
+  returns the full resulting record. This is the same `description`/`goal`/`term` captured by the
+  mandatory onboarding intake form, but now persisted — previously used only transiently to call
+  `draft-team` above and then discarded the moment `BusinessOnboarding` unmounted. `runChain()`
+  or the orchestrator do **not** read this yet; it exists so business context survives past
+  onboarding and is available for something like task-suggestion logic to read — check
+  `src/lib/businessProfileStore.js` for the read/write functions before building on top of this.
 - `POST /api/agents/:id/feedback` → body `{ feedback, taskInput?, stepOutput? }`, `feedback`
   required non-empty string. **Suggestion-only — never writes to the agent.** One Gemini call
   (`suggestContextFromFeedback` in `geminiClient.js`) drafts an updated `context` incorporating
@@ -284,10 +296,17 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   case as "(an image)". A failed iteration logs nothing, matching how it leaves `step.output`
   untouched.
 - `POST /api/optimize` (**added 2026-07-11**) → body `{ text, kind? }`, `kind` is
-  `"agent_directive" | "task_input"` (defaults to a task-prompt rewrite if omitted). Rewrites
-  `text` via Gemini for clarity/effectiveness and returns `{ optimized }`. Powers the "Optimize
-  with Gemini" buttons on the agent directive fields and the task dialog — the frontend replaces
-  the field's contents with `optimized` directly, no preview/accept step.
+  `"agent_directive" | "task_input" | "business_context"` (defaults to a task-prompt rewrite if
+  omitted). Rewrites `text` via Gemini for clarity/effectiveness and returns `{ optimized }`.
+  Powers every "Optimize with Gemini" button in the app — the frontend replaces the field's
+  contents with `optimized` directly, no preview/accept step. `business_context` (**added
+  2026-07-11**, used by the onboarding intake form and `BusinessProfileCard`'s edit form) exists
+  because `task_input`'s instructions ("rewrite this task prompt...") badly mis-fire on a
+  business description — caught live: optimizing "we make handmade candles and sell them
+  online, small team" with `task_input` turned it into a multi-section consulting strategy
+  request instead of just clarifying the sentence, since the model read it as a task to execute
+  rather than a fact to restate. `business_context`'s instruction explicitly forbids treating the
+  input as a task/request and forbids inventing unstated details.
 
 ## File structure
 ```
@@ -317,10 +336,14 @@ src/
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string, called
                          from runChain() whenever an agent's final phase flags needsImage
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
-                         or null if neither is set; agentStore/taskStore both branch on this
+                         or null if neither is set; agentStore/taskStore/businessProfileStore all
+                         branch on this
     taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
                          after mutating a fetched task, removeTask — deletes a task's record
                          outright), Redis-backed via persistence.js with an in-memory fallback
+    businessProfileStore.js — getBusinessProfile()/saveBusinessProfile() (partial-update
+                         upsert), a single global `{ description, goal, term, updatedAt }`
+                         record — Redis-backed via persistence.js with an in-memory fallback
   orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents, generates an image
@@ -341,12 +364,17 @@ src/
                          POST /:id/cancel and DELETE /:id round out the task lifecycle;
                          POST /:id/steps/:agentId/iterate re-runs one done step with extra
                          guidance and replaces its output in place
+    optimize.js        — POST /api/optimize, rewrites agent-directive/task-input/
+                         business-context text via Gemini for the "Optimize with Gemini" buttons
+    business.js        — GET/PATCH /api/business-profile, the single global business-profile
+                         record (see businessProfileStore.js above); PATCH upserts
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
 api/
   [...path].js          — Vercel serverless entrypoint for one-segment endpoints such as
-                         /api/health, /api/agents, /api/tasks, and /api/optimize
+                         /api/health, /api/agents, /api/tasks, /api/optimize, and
+                         /api/business-profile
   agents/               — explicit Vercel entrypoints for /api/agents/:id,
                          /api/agents/:id/feedback, and /api/agents/draft-team
   tasks/                — explicit Vercel entrypoints for /api/tasks/:id (DELETE),
@@ -436,16 +464,34 @@ truth; both backend stores are in memory and reset when the backend restarts.
 **Business onboarding (current, mandatory on an empty roster):** `BusinessOnboarding` replaces
 the manual creation form entirely until at least one agent exists — there is no "skip this" or
 "create manually instead" path. Two required steps: (1) an intake form (business description,
-goal, and a short-/long-term `<select>`, all `required`) that calls `POST
-/api/agents/draft-team`; (2) a review step listing every drafted agent as an editable card
-(Name/Specialty/directive/Tone, plus a Context field only shown for `term: "long"`, since
-short-term drafts don't get one) with a per-card remove button. Nothing is created during
-drafting — "Add N agents to Bullpen" loops the kept rows through the same `onCreate` handler
-the manual form uses (`POST /api/agents`, one call per agent, sequential), and any card the
-user removed just never gets created. Same "preview, never silent" pattern as every other
-Gemini-assisted feature in this app.
+goal, and a short-/long-term `<select>`, all `required`, each of description/goal with its own
+`OptimizeButton` — `kind="business_context"`, **added 2026-07-11**, see `POST /api/optimize`
+above) that calls `POST /api/agents/draft-team`; (2) a review step listing every drafted agent as
+an editable card (Name/Specialty/directive/Tone, plus a Context field only shown for
+`term: "long"`, since short-term drafts don't get one) with a per-card remove button. Nothing is
+created during drafting — "Add N agents to Bullpen" loops the kept rows through the same
+`onCreate` handler the manual form uses (`POST /api/agents`, one call per agent, sequential), and
+any card the user removed just never gets created. **Once the team is actually created**
+(**added 2026-07-11**), `createTeam()` also calls `onSaveProfile({ description, goal, term })` —
+`PATCH /api/business-profile` — so the description/goal/term typed here survive past this
+component unmounting; previously they were held only in local state and discarded the instant
+onboarding finished. Same "preview, never silent" pattern as every other Gemini-assisted feature
+in this app — the profile save follows that same rule, landing at team-creation time, not at
+draft time.
 
-**Agent creation flow (current, once the roster is non-empty):** the "New agent" /
+**Business profile card (current, added 2026-07-11):** `BusinessProfileCard` renders above the
+agent grid once at least one agent exists (`AgentsView`'s populated-roster branch — the
+zero-agent case is still `BusinessOnboarding`'s own intake form above, a separate component with
+an identical field set). Same view/edit toggle pattern as `AgentSetupSummary`: read-only by
+default (What you do / Goal / Horizon, or an "Add business profile" prompt when
+`GET /api/business-profile` returned `null`), an "Edit" button opens a form with the same
+description/goal/term fields and `OptimizeButton`s as the onboarding intake, and `save()` calls
+`onSaveProfile` → `PATCH /api/business-profile` → updates `businessProfile` app state directly
+from the response (no poll wait needed, same as every other settings-style save in this app).
+This is the only place the business profile is editable after onboarding — there is currently no
+UI that reads it back into a task or agent, since that's the teammate's in-progress
+"suggested tasks" feature; this card exists so the data has somewhere to live and be corrected
+in the meantime.
 `QuickCreateAgent` form — used for adding *more* agents after the mandatory onboarding above has
 created at least one — has a Specialty dropdown (Research / Writing / Software development /
 Data analysis / Customer support / Project management / "Create your own…" for a free-text

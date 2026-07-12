@@ -3,6 +3,7 @@ import cors from 'cors';
 import agentsRouter from './routes/agents.js';
 import tasksRouter from './routes/tasks.js';
 import optimizeRouter from './routes/optimize.js';
+import businessRouter from './routes/business.js';
 
 const app = express();
 
@@ -12,6 +13,7 @@ app.use(express.json());
 app.use('/api/agents', agentsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/optimize', optimizeRouter);
+app.use('/api/business-profile', businessRouter);
 
 const healthHandler = (req, res) => res.json({
   ok: true,

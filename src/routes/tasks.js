@@ -2,8 +2,11 @@ import { Router } from 'express';
 import multer from 'multer';
 import { createTask, getAllTasks, getTaskById, saveTask, removeTask } from '../lib/taskStore.js';
 import { runChain, runAgentStepOnce } from '../orchestrator.js';
-import { getAgentById, saveAgent } from '../agents/agentStore.js';
+import { getAgentById, getAllAgents, saveAgent } from '../agents/agentStore.js';
 import { DEFAULT_EXECUTION_MODE, EXECUTION_MODES, isExecutionMode } from '../lib/executionModes.js';
+import { getWorkspaceProfile } from '../lib/workspaceStore.js';
+import { buildTaskSuggestionContext } from '../lib/taskSuggestions.js';
+import { suggestTasksForWorkspace } from '../lib/geminiClient.js';
 
 const router = Router();
 
@@ -20,6 +23,24 @@ router.get('/', async (req, res) => {
     res.json(await getAllTasks());
   } catch (err) {
     res.status(500).json({ error: 'Failed to load tasks', detail: err.message });
+  }
+});
+
+router.post('/suggestions', async (req, res) => {
+  try {
+    const [profile, agents, tasks] = await Promise.all([
+      getWorkspaceProfile(),
+      getAllAgents(),
+      getAllTasks(),
+    ]);
+    if (!profile && agents.length === 0 && tasks.length === 0) {
+      return res.status(400).json({ error: 'Add business details, agents, or completed tasks before requesting suggestions' });
+    }
+    const context = buildTaskSuggestionContext({ profile, agents, tasks });
+    const suggestions = await suggestTasksForWorkspace(context);
+    res.json({ suggestions });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to suggest tasks', detail: err.message });
   }
 });
 

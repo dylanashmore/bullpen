@@ -82,22 +82,25 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ description, goal, term }),
   }),
-  deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // The business description/goal/term captured during onboarding — a single
   // global record, persisted so it's still around after the starting team is
-  // created (previously discarded the moment BusinessOnboarding unmounted).
-  getBusinessProfile: () => request("/api/business-profile"),
-  saveBusinessProfile: (fields) => request("/api/business-profile", {
-    method: "PATCH",
+  // created (previously discarded the moment BusinessOnboarding unmounted),
+  // and readable server-side by POST /api/tasks/suggestions. Both return
+  // { profile }, not the profile directly.
+  getWorkspaceProfile: () => request("/api/workspace"),
+  saveWorkspaceProfile: ({ description, goal, term }) => request("/api/workspace", {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(fields),
+    body: JSON.stringify({ description, goal, term }),
   }),
+  deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   optimizeText: (text, kind) => request("/api/optimize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, kind }),
   }),
   getTasks: () => request("/api/tasks"),
+  suggestTasks: () => request("/api/tasks/suggestions", { method: "POST" }),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   deleteTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // Re-runs one already-completed step with extra guidance, replacing its

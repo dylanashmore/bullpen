@@ -254,6 +254,19 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   re-write the record (same class of risk as the fire-and-forget `runChain()` caveat noted
   below), which is harmless in practice since the frontend has already dropped that id locally
   and isn't polling for it.
+- `POST /api/tasks/:id/steps/:agentId/iterate` (**added 2026-07-11**) → body `{ details }`,
+  required non-empty string. Re-runs that one already-`done` step with `details` folded into its
+  original input (reconstructed from `task.input` for a root agent, or the upstream step's
+  output for a dependent one — steps don't store their own input), and replaces `step.output` in
+  place. 404 if the task or step doesn't exist; 400 if the step isn't `done` yet or `details` is
+  empty. Blocking, like `/api/optimize` — not fire-and-forget like task creation — but
+  `step.phase` is still written back after every phase internally, so the independent
+  `GET /api/tasks` poll shows live progress (e.g. `"Revising"`) even while this request is still
+  in flight. On failure the step reverts to its previous output/phase (still `done`) rather than
+  losing the last good result; the error surfaces as a normal failed-request toast on the
+  frontend. Distinct from `POST /api/agents/:id/feedback`: that drafts a durable context update
+  for the agent's *future* tasks and never touches this task; this endpoint fixes *this* task's
+  actual result right now and never touches the agent's context.
 - `POST /api/optimize` (**added 2026-07-11**) → body `{ text, kind? }`, `kind` is
   `"agent_directive" | "task_input"` (defaults to a task-prompt rewrite if omitted). Rewrites
   `text` via Gemini for clarity/effectiveness and returns `{ optimized }`. Powers the "Optimize
@@ -296,7 +309,12 @@ src/
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents, generates an image
                          mid-step whenever a phase flags needsImage), getTextAgentPhaseCount()
-                         (resolves phase count from a task's executionMode)
+                         (resolves phase count from a task's executionMode), runAgentStepOnce()
+                         (one agent's full phase sequence run standalone, outside any task
+                         chain — powers POST /:id/steps/:agentId/iterate; deliberately
+                         duplicates runChain's per-step logic rather than sharing it, since
+                         runChain's version is also cancellation-aware between phases in a way a
+                         lone step re-run doesn't need)
   routes/
     agents.js          — GET/POST/PATCH/DELETE /api/agents, with validation; POST /:id/feedback
                          drafts a context suggestion from feedback without persisting it;
@@ -304,7 +322,9 @@ src/
                          description/goal/term, also without persisting anything
     tasks.js           — GET/POST /api/tasks, with validation; multer (memory storage) parses
                          an optional multipart file upload alongside the JSON path;
-                         POST /:id/cancel and DELETE /:id round out the task lifecycle
+                         POST /:id/cancel and DELETE /:id round out the task lifecycle;
+                         POST /:id/steps/:agentId/iterate re-runs one done step with extra
+                         guidance and replaces its output in place
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
@@ -313,9 +333,10 @@ api/
                          /api/health, /api/agents, /api/tasks, and /api/optimize
   agents/               — explicit Vercel entrypoints for /api/agents/:id,
                          /api/agents/:id/feedback, and /api/agents/draft-team
-  tasks/                — explicit Vercel entrypoints for /api/tasks/:id (DELETE) and
-                         /api/tasks/:id/cancel (POST). These nested files are required because
-                         Vercel's Vite-generated route manifest
+  tasks/                — explicit Vercel entrypoints for /api/tasks/:id (DELETE),
+                         /api/tasks/:id/cancel (POST), and
+                         /api/tasks/:id/steps/:agentId/iterate (POST). These nested files are
+                         required because Vercel's Vite-generated route manifest
                          treats the top-level [...path] function as a single path segment.
                          Every entrypoint re-exports the same Express app from src/app.js.
                          Agent/Task state now persists via Redis (see Storage above)
@@ -466,6 +487,35 @@ instead of leaving you on a "Task not found" page.
 for the agent's future behavior, the closest semantic fit of the two existing `kind` values —
 no new backend `kind` was added). Same "rewrite in place, no preview step" behavior as everywhere
 else `OptimizeButton` is used.
+
+**Iterate on a step's output (current, added 2026-07-11):** a completed step now has *two*
+sibling toggle buttons side by side (`.step-actions`, a flex row that wraps whichever one is open
+onto its own full-width line) — the existing "Leave feedback for {agent}" (`StepFeedback`,
+unchanged: drafts a durable context update, never touches this task's output) and a new
+"Iterate with more details" (`StepIterate`). `StepIterate`'s form — textarea, an `OptimizeButton`
+with `kind="task_input"`, Cancel/Regenerate — calls `POST /api/tasks/:id/steps/:agentId/iterate`
+via the new `iterateStep(taskId, agentId, details)` handler in `App`, which replaces that task in
+local `tasks` state with the server's response on success. This is the one clear line the two
+features draw: feedback only ever writes to the agent's `context` (shared, future tasks);
+iterate only ever rewrites `step.output` on *this* task, never touches the agent's context. Since
+the request is blocking (same pattern as `optimizeText`/`suggestContextFromFeedback`, not
+fire-and-forget like task creation) but the backend still writes `step.phase` after every
+internal phase, the independent 2s poll can flip the step's status to `"working"` mid-request —
+which unmounts `StepIterate`'s open form early, before the awaited request actually resolves,
+since both `StepFeedback` and `StepIterate` are gated on `step.status === "done"`. This is
+harmless (the `iterateStep` handler that ultimately applies the new output lives in `App`, which
+never unmounts) but does mean the form visibly closes slightly before the result is ready rather
+than exactly when it's ready — accepted as a minor cosmetic gap, not a correctness bug (caught
+via Playwright testing 2026-07-11: a naive "wait for the form to close" test assertion had to be
+rewritten to "wait for step status done AND output changed" for exactly this reason).
+
+**Loading-state animation on "Suggest update" / "Regenerate" (fixed 2026-07-11):** both buttons
+previously just swapped their label to static text ("Thinking…" / would-be "Regenerating…") while
+awaiting a Gemini call that regularly takes 6-15+ seconds — with no animation, that reads as a
+frozen/broken button well before it actually resolves (this is what "suggest update doesn't work"
+turned out to be — the feature worked, but looked stuck). Both buttons now get a `loading`
+class (`.agent-instructions-actions .save.loading`) that hides the label text and overlays an
+animated pulsing "●●●" (`@keyframes save-loading-pulse`) for the duration of the request.
 
 **Execution mode picker (current, added 2026-07-11):** `TaskDialog` has a Fast/Thorough radio
 group (`executionModes` array — id, label, one-line description) below the task-input field,

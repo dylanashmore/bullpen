@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { createTask, getAllTasks, getTaskById, saveTask, removeTask } from '../lib/taskStore.js';
-import { runChain } from '../orchestrator.js';
+import { runChain, runAgentStepOnce } from '../orchestrator.js';
 import { getAgentById, saveAgent } from '../agents/agentStore.js';
 import { DEFAULT_EXECUTION_MODE, EXECUTION_MODES, isExecutionMode } from '../lib/executionModes.js';
 
@@ -62,6 +62,84 @@ router.delete('/:id', async (req, res) => {
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete task', detail: err.message });
+  }
+});
+
+// Re-runs one already-completed step with extra user guidance folded into its
+// original input, replacing its output in place — distinct from the
+// feedback→context flow (POST /api/agents/:id/feedback), which is about
+// updating the agent's durable memory for *future* tasks. This is about
+// improving *this* task's result right now. Blocking (like optimizeText/
+// suggestContextFromFeedback), not fire-and-forget like task creation — but
+// step.phase is still written back after every phase via runAgentStepOnce's
+// onPhase, so the independent GET /api/tasks poll shows live progress even
+// while this request is still in flight.
+router.post('/:id/steps/:agentId/iterate', async (req, res) => {
+  try {
+    const task = await getTaskById(req.params.id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    const step = task.steps?.find((s) => s.agentId === req.params.agentId);
+    if (!step) return res.status(404).json({ error: 'Step not found on this task' });
+    if (step.status !== 'done') {
+      return res.status(400).json({ error: 'Only a completed step can be iterated on' });
+    }
+
+    const details = req.body?.details;
+    if (!details || typeof details !== 'string' || !details.trim()) {
+      return res.status(400).json({ error: 'details is required and must be a non-empty string' });
+    }
+
+    const agent = await getAgentById(req.params.agentId);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    // Steps don't store their own input — reconstruct it the same way runChain
+    // resolves it: a root agent's input is the task's own input, a dependent
+    // agent's input is whatever its upstream step produced.
+    const baseInput = agent.dependsOnAgent
+      ? task.steps.find((s) => s.agentId === agent.dependsOnAgent)?.output
+      : task.input;
+    const previousOutputText = typeof step.output === 'string' && !step.output.startsWith('data:image/')
+      ? step.output
+      : null;
+    const iterationInput = previousOutputText
+      ? `${baseInput}\n\nYou already produced this response:\n"""${previousOutputText}"""\n\nThe user wants it ` +
+        `improved with this additional guidance:\n${details.trim()}\n\nProduce a new, improved version that ` +
+        'incorporates this guidance.'
+      : `${baseInput}\n\nAdditional guidance to incorporate:\n${details.trim()}`;
+
+    const originalOutput = step.output;
+    const originalPhase = step.phase;
+    step.status = 'working';
+    step.phase = 'Revising';
+    await saveTask(task);
+    agent.status = 'working';
+    await saveAgent(agent);
+
+    try {
+      const { output, phase } = await runAgentStepOnce(agent, iterationInput, {
+        executionMode: task.executionMode,
+        onPhase: async (label) => {
+          step.phase = label;
+          await saveTask(task);
+        },
+      });
+      step.output = output;
+      step.phase = phase;
+      step.status = 'done';
+      await saveTask(task);
+      res.json(task);
+    } catch (err) {
+      step.output = originalOutput;
+      step.phase = originalPhase;
+      step.status = 'done';
+      await saveTask(task);
+      res.status(500).json({ error: 'Failed to iterate on step', detail: err.message });
+    } finally {
+      agent.status = 'idle';
+      await saveAgent(agent);
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to iterate on step', detail: err.message });
   }
 });
 

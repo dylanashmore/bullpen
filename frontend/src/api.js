@@ -88,6 +88,14 @@ export const api = {
   getTasks: () => request("/api/tasks"),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   deleteTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // Re-runs one already-completed step with extra guidance, replacing its
+  // output in place — distinct from suggestContextFromFeedback, which is
+  // about the agent's durable memory, not this task's result.
+  iterateStep: (taskId, agentId, details) => request(`/api/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(agentId)}/iterate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ details }),
+  }),
   createTask: ({ input, file, agentId = null, executionMode = "fast" }) => {
     if (file) {
       const body = new FormData();

@@ -841,6 +841,47 @@ function StepOutput({ output }) {
   return <FormattedText className="task-output-text" value={output} />;
 }
 
+// Re-runs an already-completed step with extra user guidance folded into its
+// original input, replacing the step's output in place — distinct from
+// StepFeedback below, which drafts a durable context update for the agent's
+// *future* tasks rather than fixing *this* task's result right now.
+function StepIterate({ agent, step, taskId, onIterate }) {
+  const [open, setOpen] = useState(false);
+  const [details, setDetails] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  if (!agent) return null;
+
+  function reset() {
+    setOpen(false);
+    setDetails("");
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!details.trim()) return;
+    setLoading(true);
+    const ok = await onIterate(taskId, agent.id, details.trim());
+    setLoading(false);
+    if (ok) reset();
+  }
+
+  if (!open) {
+    return <button type="button" className="step-feedback-toggle" onClick={() => setOpen(true)}>Iterate with more details</button>;
+  }
+
+  return (
+    <form className="step-feedback-form" onSubmit={submit}>
+      <textarea value={details} onChange={(event) => setDetails(event.target.value)} rows="2" maxLength="500" placeholder="What should be different this time?" autoFocus />
+      <OptimizeButton text={details} kind="task_input" onOptimized={setDetails} disabled={loading} />
+      <div className="agent-instructions-actions">
+        <button type="button" onClick={reset} disabled={loading}>Cancel</button>
+        <button className={`save${loading ? " loading" : ""}`} type="submit" disabled={!details.trim() || loading}>{loading ? "Regenerating…" : "Regenerate"}</button>
+      </div>
+    </form>
+  );
+}
+
 // Lets a user leave feedback on a completed step, attributed to whichever
 // agent ran it. onSuggest drafts a possible context update via Gemini
 // without saving anything; the user reviews it and onApply is only called if
@@ -905,14 +946,14 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
       <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows="2" maxLength="500" placeholder={`What should ${agent.name} know for next time?`} autoFocus />
       <OptimizeButton text={feedback} kind="agent_directive" onOptimized={setFeedback} disabled={loading} />
       <div className="agent-instructions-actions">
-        <button type="button" onClick={reset}>Cancel</button>
-        <button className="save" type="submit" disabled={!feedback.trim() || loading}>{loading ? "Thinking…" : "Suggest update"}</button>
+        <button type="button" onClick={reset} disabled={loading}>Cancel</button>
+        <button className={`save${loading ? " loading" : ""}`} type="submit" disabled={!feedback.trim() || loading}>{loading ? "Thinking…" : "Suggest update"}</button>
       </div>
     </form>
   );
 }
 
-function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete }) {
+function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onIterate, onDelete }) {
   const status = task.status || "pending";
   const executionModeLabel = task.executionMode === "thorough" ? "Thorough" : task.executionMode === "fast" ? "Fast" : null;
   const directlyAssignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
@@ -939,7 +980,12 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete })
               <details className={`task-step ${step.status}`} key={step.agentId} open={task.steps.length === 1 || step.status === "error"}>
                 <summary><span>{agent?.name || step.agentId}</span><span>{step.status === "working" && step.phase ? step.phase : step.status}</span></summary>
                 <StepOutput output={step.output} />
-                {step.status === "done" && <StepFeedback agent={agent} step={step} taskInput={task.input} onSuggest={onSuggestFeedback} onApply={onApplyContext} />}
+                {step.status === "done" && (
+                  <div className="step-actions">
+                    <StepIterate agent={agent} step={step} taskId={task.id} onIterate={onIterate} />
+                    <StepFeedback agent={agent} step={step} taskInput={task.input} onSuggest={onSuggestFeedback} onApply={onApplyContext} />
+                  </div>
+                )}
               </details>
             );
           })}
@@ -992,7 +1038,7 @@ function TasksView({ tasks, agents, connection, onCreate, onOpen, onDelete }) {
 // Each task's own page (linked from the Tasks index and the sidebar's recent
 // history) — renders the full TaskCard (steps, outputs, feedback) rather than
 // the compact row used in the list.
-function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext, onDelete }) {
+function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext, onIterate, onDelete }) {
   return (
     <>
       <div className="page-heading task-detail-heading">
@@ -1002,7 +1048,7 @@ function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContex
         </div>
       </div>
       {task
-        ? <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} onDelete={onDelete} />
+        ? <TaskCard task={task} agents={agents} onSuggestFeedback={onSuggestFeedback} onApplyContext={onApplyContext} onIterate={onIterate} onDelete={onDelete} />
         : <div className="list-empty"><strong>Task not found</strong>It may have been removed, or hasn't loaded yet.</div>}
     </>
   );
@@ -1261,6 +1307,21 @@ export default function App() {
     }
   }
 
+  // Re-runs one already-completed step with extra guidance, replacing its
+  // output in place — separate from suggestFeedbackContext above, which
+  // updates the agent's durable memory rather than this task's own result.
+  async function iterateStep(taskId, agentId, details) {
+    try {
+      const updated = await api.iterateStep(taskId, agentId, details);
+      setTasks((current) => current.map((task) => task.id === taskId ? updated : task));
+      notify("Output updated.");
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
+    }
+  }
+
   function openTaskDialog(targetAgent = null) {
     if (!connection.online) {
       notify(IS_LOCAL_DEV ? "Start the Bullpen backend before running a task." : "The Bullpen service is temporarily unavailable.");
@@ -1382,7 +1443,7 @@ export default function App() {
             {view === "agents"
               ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : view === "task-detail"
-                ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onDelete={deleteTask} />
+                ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onIterate={iterateStep} onDelete={deleteTask} />
                 : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} onDelete={deleteTask} />}
           </section>
         </main>

@@ -62,6 +62,47 @@ export async function resolveAgentChain(agentIds) {
   return resolved.filter(Boolean);
 }
 
+// Runs one agent's full phase sequence standalone, outside any task chain —
+// used by the "iterate on this output" route (POST
+// /api/tasks/:id/steps/:agentId/iterate) to re-run a single already-done step
+// with extra user guidance folded into its input. Mirrors the per-step logic
+// inside runChain's Promise.all body (phase loop, needsImage short-circuit,
+// image generation) but deliberately duplicated rather than shared: runChain's
+// version is also cancellation-aware between phases, which a lone re-run of
+// one step doesn't need, and this keeps that already-tested loop untouched.
+// onPhase, if provided, is awaited after every phase (and before an eventual
+// image generation) so the caller can persist step.phase for live polling —
+// same idea as runChain's inline `step.phase = ...; await saveTask(task)`.
+export async function runAgentStepOnce(agent, stepInput, { executionMode, file, onPhase } = {}) {
+  const totalPhases = getTextAgentPhaseCount(executionMode);
+  let previousContent;
+  let needsImage = false;
+  let imagePrompt;
+  let phaseLabel;
+  for (let phaseNumber = 1; phaseNumber <= totalPhases; phaseNumber += 1) {
+    const result = await runAgentPromptPhase(agent, {
+      input: stepInput,
+      phaseNumber,
+      totalPhases,
+      previousContent,
+      file: phaseNumber === 1 ? file : undefined,
+      executionMode,
+    });
+    phaseLabel = result.phase;
+    if (onPhase) await onPhase(phaseLabel);
+    previousContent = result.content;
+    needsImage = result.needsImage;
+    imagePrompt = result.imagePrompt;
+    if (needsImage) break;
+  }
+  if (needsImage) {
+    phaseLabel = 'Generating image';
+    if (onPhase) await onPhase(phaseLabel);
+    return { output: await generateImage(imagePrompt || previousContent), phase: phaseLabel };
+  }
+  return { output: previousContent, phase: phaseLabel };
+}
+
 // Executes a task's agent chain, mutating `task` in place as steps progress
 // and writing back to the store after every transition so GET /api/tasks
 // (and a concurrent cancel request) see live status. Agents with no unmet

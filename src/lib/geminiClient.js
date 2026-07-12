@@ -92,6 +92,14 @@ const PHASE_RESPONSE_SCHEMA = {
       type: 'string',
       description: 'This phase\'s work product, and nothing else — no meta-commentary about this JSON structure, no remarks about the schema or formatting, no markdown code fences wrapping it. Exactly what this phase\'s answer would be if it were the agent\'s entire response.',
     },
+    needsImage: {
+      type: 'boolean',
+      description: 'Only meaningful on your final phase (always false otherwise): true if the best way to answer this task is a generated image (a picture, logo, illustration, diagram, design mockup, etc.) rather than words alone.',
+    },
+    imagePrompt: {
+      type: 'string',
+      description: 'Only present when needsImage is true: a detailed, self-contained prompt describing exactly what image to generate (subject, style, composition, colors, mood). Omit otherwise.',
+    },
   },
   required: ['phase', 'content'],
 };
@@ -104,6 +112,11 @@ const PHASE_OUTPUT_TOKEN_LIMIT = 16384;
 // hardcoded phase list, since what "phase 1" means varies by agent/task.
 // The final phase's `content` is the step's actual output; earlier phases'
 // `content` is intermediate work product handed to the next phase as context.
+// On the final phase only, the model can also flag needsImage/imagePrompt —
+// every agent can produce an image dynamically when the task calls for one,
+// there's no separate "image agent" outputType anymore (removed 2026-07-11).
+// The caller (runChain in orchestrator.js) is what actually calls the image
+// generator when needsImage comes back true.
 export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhases, previousContent, file }) {
   try {
     const phaseInstruction = phaseNumber === 1
@@ -128,10 +141,16 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
     const systemInstruction = `${agent.buildSystemPrompt()}\n\nYou have real web access: fetch and read specific ` +
       'URLs mentioned in your input, and use live search for anything current or outside your training data. ' +
       'Use them whenever they would make your answer more accurate — do not guess or fabricate when you could ' +
-      'look it up instead.\n\nYou are running as one phase of a multi-phase pipeline. Respond with ONLY the ' +
-      'required JSON object (phase, content) — no markdown code fences around it, no text outside it. The ' +
-      '"content" field is where the "respond with only the requested output itself" rule above applies: it must ' +
-      'contain your actual output for this phase and nothing about the JSON structure, schema, or formatting.';
+      'look it up instead.\n\nYou can also request a generated image instead of (or as) your final answer: if ' +
+      `this is your final phase (phase ${phaseNumber} of ${totalPhases}) and the task is best answered with a ` +
+      'picture, logo, illustration, diagram, or visual design rather than words, set needsImage to true and ' +
+      'imagePrompt to a detailed, self-contained description of exactly what to generate. Only decide this on ' +
+      'your final phase — leave needsImage false on every earlier phase, and leave it false whenever a normal ' +
+      'text/structured answer is what the task actually calls for; most tasks do not need an image.\n\nYou are ' +
+      'running as one phase of a multi-phase pipeline. Respond with ONLY the required JSON object (phase, ' +
+      'content, and needsImage/imagePrompt when applicable) — no markdown code fences around it, no text outside ' +
+      'it. The "content" field is where the "respond with only the requested output itself" rule above applies: ' +
+      'it must contain your actual output for this phase and nothing about the JSON structure, schema, or formatting.';
 
     const response = await generateContentWithRetry({
       model: agent.model || DEFAULT_AGENT_MODEL,
@@ -156,7 +175,12 @@ export async function runAgentPromptPhase(agent, { input, phaseNumber, totalPhas
     if (!parsed.content) {
       throw new Error('Gemini phase response was missing content');
     }
-    return { phase: parsed.phase || `Phase ${phaseNumber}`, content: parsed.content };
+    return {
+      phase: parsed.phase || `Phase ${phaseNumber}`,
+      content: parsed.content,
+      needsImage: phaseNumber === totalPhases && Boolean(parsed.needsImage),
+      imagePrompt: parsed.imagePrompt || undefined,
+    };
   } catch (err) {
     throw new Error(`runAgentPromptPhase failed for agent "${agent.id}" (phase ${phaseNumber}/${totalPhases}): ${err.message}`);
   }
@@ -270,7 +294,7 @@ export async function draftTeamForBusiness({ description, goal, term }) {
                   role: { type: 'string', description: 'One to two sentence description of what this agent does.' },
                   specialty: { type: 'string', description: 'Short category label, e.g. "Writing" or "Data analysis".' },
                   inputType: { type: 'string', description: 'What kind of input this agent expects, e.g. "topic" or "agent_output".' },
-                  outputType: { type: 'string', enum: ['text', 'image', 'structured', 'feedback'] },
+                  outputType: { type: 'string', enum: ['text', 'structured', 'feedback'] },
                   tone: { type: 'string', description: 'Optional working style/tone, e.g. "concise and analytical".' },
                   context: { type: 'string', description: 'Optional business background this agent should keep in mind. Empty string if not needed.' },
                 },

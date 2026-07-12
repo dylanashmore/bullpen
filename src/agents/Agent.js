@@ -1,4 +1,8 @@
-const VALID_OUTPUT_TYPES = new Set(['text', 'image', 'structured', 'feedback']);
+// 'image' was previously a selectable outputType that dedicated a whole agent
+// to Imagen calls; removed 2026-07-11 in favor of every agent being able to
+// generate an image dynamically, per-task, when Gemini itself decides one is
+// warranted (see runAgentPromptPhase's needsImage/imagePrompt in geminiClient.js).
+const VALID_OUTPUT_TYPES = new Set(['text', 'structured', 'feedback']);
 import { DEFAULT_AGENT_MODEL } from '../lib/models.js';
 
 export class Agent {

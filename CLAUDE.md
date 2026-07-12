@@ -25,14 +25,20 @@ against them concurrently. Everything else in this codebase can be refactored fr
   `SUPPORTED_AGENT_MODELS` (`src/lib/models.js`) and the frontend's `geminiModels`
   (`frontend/src/App.jsx`). Don't reintroduce any `gemini-2.5-*` id without testing it against a
   real key first.
-- Images: Google Imagen API (`ai.models.generateImages`) for any agent whose `outputType` is
-  `"image"` — currently `imagen-4.0-generate-001`. **Confirmed blocked on this key's free tier**
-  ("Imagen 3 is only available on paid plans") as of 2026-07-11; unverified whether the account's
-  new paid/pro billing setup resolves this — retest before relying on it for a demo. Google has
-  also announced deprecation of standalone Imagen models for 2026-08-17 in favor of
+- Images: Google Imagen API (`ai.models.generateImages`) — currently `imagen-4.0-generate-001`,
+  called from `generateImage()` in `imagenClient.js` whenever an agent's own final phase flags
+  `needsImage: true` (see "Automatic image generation" below); no longer gated by a per-agent
+  `outputType` value. Was blocked on this key's free tier ("Imagen 3 is only available on paid
+  plans") as of 2026-07-11; **confirmed working later the same day** after a billing change —
+  still worth a quick retest before a demo if the project's billing setup changes again. Google
+  has also announced deprecation of standalone Imagen models for 2026-08-17 in favor of
   `gemini-2.5-flash-image` ("Nano Banana") — note that despite the "2.5" in its name this is an
   image-output model, a separate deprecation track from the `gemini-2.5-flash` *text* models
-  above; don't assume it's affected by the same cutoff without checking.
+  above; don't assume it's affected by the same cutoff without checking. Also confirmed working
+  live on this key (2026-07-11, not yet wired into the app): `gemini-3-pro-image-preview` /
+  `gemini-3-pro-image` ("Nano Banana Pro", GA June 2026) — a newer, higher-quality image model
+  called via a normal `generateContent` request (returns an `inlineData` image part) rather than
+  the separate `generateImages` API; a candidate to replace Imagen here, not yet decided.
 - Storage: `src/lib/persistence.js` holds a Redis client (`@upstash/redis`, REST-based — works
   over plain HTTP, so it's fine in serverless/edge) built from `KV_REST_API_URL`/`KV_REST_API_TOKEN`
   (Vercel KV naming) or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (direct Upstash
@@ -53,8 +59,10 @@ Every specialist agent is an instance of the `Agent` class (`src/agents/Agent.js
 - `name`, `role` (job description, feeds into both its system prompt and its function
   declaration's description)
 - `inputType` — what it expects (e.g. `"topic"`, `"agent_output"`)
-- `outputType` — `"text" | "image" | "structured" | "feedback"`. `"image"` routes execution
-  through Imagen instead of a normal Gemini `generateContent` call.
+- `outputType` — `"text" | "structured" | "feedback"`. No `"image"` value anymore (retired
+  2026-07-11) — every agent can generate an image dynamically, per-task, when its own final
+  phase judges the task calls for one (see "Automatic image generation" below), rather than a
+  human pre-designating a whole agent as image-only.
 - `dependsOnAgent` — id of an upstream agent whose output feeds this agent's input, or `null`
   if it can run standalone from the raw task input
 - `tone` (optional flavor for the system prompt)
@@ -92,25 +100,39 @@ example used in tests and docs below — just note it no longer exists until som
   single code path for single-agent, multi-step pipeline, and parallel-branch tasks.
 
 ## Phased execution (added 2026-07-11)
-Every text/structured/feedback agent step now runs as `TEXT_AGENT_PHASES` (currently 2)
-sequential Gemini calls instead of one, via `runAgentPromptPhase()` in `geminiClient.js`, called
-in a loop from `runChain()` in `orchestrator.js`. This is what powers `step.phase` in the API
-contract above — real per-task phase labels (e.g. "Gathering" then "Summarizing") rather than a
-static "Working" the whole time. Mechanics:
+Every agent step now runs as `TEXT_AGENT_PHASES` (currently 2) sequential Gemini calls instead
+of one, via `runAgentPromptPhase()` in `geminiClient.js`, called in a loop from `runChain()` in
+`orchestrator.js`. This is what powers `step.phase` in the API contract above — real per-task
+phase labels (e.g. "Gathering" then "Summarizing") rather than a static "Working" the whole
+time. Mechanics:
 - Each call asks Gemini for structured JSON output (`responseMimeType: 'application/json'`,
-  a `{ phase, content }` schema) — the model picks its own short gerund label for what that
-  phase is doing, specific to the task at hand, not a hardcoded list.
+  a `{ phase, content, needsImage?, imagePrompt? }` schema) — the model picks its own short
+  gerund label for what that phase is doing, specific to the task at hand, not a hardcoded list.
 - Phase 1's prompt asks for "the natural first part of the work" (research/gathering/drafting);
   the final phase's prompt hands back phase 1's `content` as context and asks for the finished
-  answer. Only the *last* phase's `content` becomes the step's actual `output` — earlier phases'
-  content is intermediate work product, never shown to the user directly.
+  answer. Only the *last* phase's `content` becomes the step's actual `output` (unless it flags
+  `needsImage` — see "Automatic image generation" below) — earlier phases' content is
+  intermediate work product, never shown to the user directly.
 - `step.phase` is written back to the store (`saveTask`) after every phase completes, so
   `GET /api/tasks` reflects the current phase mid-execution, not just at the end.
-- Image agents (`outputType: 'image'`) are unaffected — Imagen has no equivalent notion of an
-  intermediate phase, so they still run as a single `generateImage()` call.
 - Cost/latency tradeoff: this roughly doubles Gemini calls (and therefore latency and token
-  spend) for every non-image agent step. Accepted as worthwhile for the demo; revisit
+  spend) for every agent step. Accepted as worthwhile for the demo; revisit
   `TEXT_AGENT_PHASES` if either becomes a problem.
+
+## Automatic image generation (added 2026-07-11, replaces the old `outputType: 'image'`)
+There is no more dedicated "image agent" you designate at creation time. Instead, every agent's
+**final** phase call can flag `needsImage: true` (plus an `imagePrompt` string) in its structured
+JSON response when Gemini itself judges the task is best answered with a generated image — a
+picture, logo, illustration, diagram, or design mockup — rather than text/structured content.
+The instruction telling the model about this capability, and to only decide it on the final
+phase, lives in `runAgentPromptPhase()`'s `systemInstruction` in `geminiClient.js`. When
+`runChain()` (`orchestrator.js`) sees `needsImage` come back true from the final phase, it sets
+`step.phase = 'Generating image'`, calls `generateImage(imagePrompt || <the phase's text
+content>)` (`imagenClient.js`, unchanged — still Imagen), and uses *that* as the step's `output`
+instead of the text `content`. Any agent can end up producing an image on one task and plain
+text on the next; there's nothing on the `Agent` object that predicts which. The frontend needed
+no changes for this — `StepOutput` already renders `output` as an `<img>` whenever it's a
+`data:image/...` string and as text otherwise, regardless of *why* it ended up that way.
 
 **Web access (added 2026-07-11):** every `runAgentPromptPhase()` call passes
 `tools: [{ urlContext: {} }, { googleSearch: {} }]` — real Gemini API tools, not agent-to-agent
@@ -122,8 +144,9 @@ against the API before rolling this out. The system instruction in `runAgentProm
 the model it has this access so it actually uses it rather than guessing. **Before this, no agent
 in this codebase — in any prior commit — had any real web/search/fetch capability**; anything
 that looked like it (e.g. summarizing "the reviews at this Google link") was the model producing
-plausible-sounding text from training data, not genuinely reading the page. Image agents don't
-get this — Imagen's `generateImages` call has no `tools` support.
+plausible-sounding text from training data, not genuinely reading the page. The image-generation
+call itself (`generateImage()` in `imagenClient.js`, triggered by `needsImage` — see "Automatic
+image generation" above) doesn't get this — Imagen's `generateImages` call has no `tools` support.
 
 **Reliability fixes (added 2026-07-11, found via stress-testing after merging web access):**
 - Phase 1 hit a real `finishReason: MAX_TOKENS` failure in testing — the model wrote out several

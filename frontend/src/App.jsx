@@ -27,9 +27,11 @@ const inputTypes = [
   { value: "data", label: "Structured data" },
 ];
 
+// No "Image" entry — every agent can generate an image automatically when a
+// task calls for one (Gemini decides per-task), so there's no separate
+// dedicated image-output agent type to pick anymore.
 const outputTypes = [
   { value: "text", label: "Text" },
-  { value: "image", label: "Image" },
   { value: "structured", label: "Structured data" },
   { value: "feedback", label: "Feedback" },
 ];
@@ -463,7 +465,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
           <button className="minimize-advanced" type="button" onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")}><span>Minimize advanced setup</span><span aria-hidden="true">↑</span></button>
         </div>
       </details>
-      {outputType === "image" ? <div className="image-model-note"><span className="model-red-dot" />Uses the Imagen image model</div> : <ModelSlider value={model} onChange={setModel} disabled={saving || disabled} />}
+      <ModelSlider value={model} onChange={setModel} disabled={saving || disabled} />
       <button className="button primary quick-submit" type="submit" disabled={saving || disabled}><span aria-hidden="true">+</span>{saving ? "Adding…" : "Add to Bullpen"}</button>
     </form>
   );
@@ -765,9 +767,7 @@ function AgentCard({ agent, agents, dependencyName, assignedTask, taskCount, onO
         </div>
       </div>
       <button className="agent-assign-button" type="button" onClick={() => onOpenTask(agent)} disabled={working}>{taskCount === 0 ? "Give it its first task" : "Assign next task"}<span aria-hidden="true">→</span></button>
-      {agent.outputType === "image"
-        ? <div className="image-model-note"><span className="model-red-dot" />Imagen image model</div>
-        : <ModelSlider value={agent.model || DEFAULT_MODEL} onChange={(model) => onModelChange(agent.id, model)} disabled={working} />}
+      <ModelSlider value={agent.model || DEFAULT_MODEL} onChange={(model) => onModelChange(agent.id, model)} disabled={working} />
       <footer className="agent-footer"><span className={`status-badge${working ? " working" : ""}`}>{working ? "Working" : "Ready"}</span><span className="task-count">{taskCount} {taskCount === 1 ? "task" : "tasks"}</span></footer>
     </article>
   );

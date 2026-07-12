@@ -5,7 +5,10 @@ import { suggestContextFromFeedback, draftTeamForBusiness } from '../lib/geminiC
 
 const router = Router();
 
-const VALID_OUTPUT_TYPES = ['text', 'image', 'structured', 'feedback'];
+// 'image' retired 2026-07-11 — no more dedicated image-output agents; every
+// agent can generate an image dynamically when a task calls for one (see
+// needsImage/imagePrompt in geminiClient.js's runAgentPromptPhase).
+const VALID_OUTPUT_TYPES = ['text', 'structured', 'feedback'];
 const REQUIRED_FIELDS = ['name', 'role', 'inputType', 'outputType'];
 
 router.get('/', async (req, res) => {

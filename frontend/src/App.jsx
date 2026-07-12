@@ -805,10 +805,40 @@ function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onOpenTa
   );
 }
 
+// Gemini commonly returns lightweight Markdown. Rendering its emphasis and
+// list markers as plain text exposed characters such as ** around words, so
+// handle the common inline forms without injecting HTML into the page.
+function formatInlineMarkdown(text, lineIndex) {
+  return text.split(/(\*\*[^*\n]+\*\*|__[^_\n]+__)/g).filter(Boolean).map((part, partIndex) => {
+    const isBold = (part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"));
+    return isBold
+      ? <strong key={`${lineIndex}-${partIndex}`}>{part.slice(2, -2)}</strong>
+      : <span key={`${lineIndex}-${partIndex}`}>{part}</span>;
+  });
+}
+
+function FormattedText({ value, className }) {
+  return (
+    <div className={className}>
+      {String(value).split("\n").map((rawLine, lineIndex) => {
+        const bullet = rawLine.match(/^\s*[-*+]\s+(.+)$/);
+        const heading = rawLine.match(/^\s*#{1,6}\s+(.+)$/);
+        const line = bullet?.[1] ?? heading?.[1] ?? rawLine;
+        return (
+          <span className={`formatted-line${bullet ? " bullet" : ""}${heading ? " heading" : ""}`} key={lineIndex}>
+            {bullet && <span className="formatted-bullet" aria-hidden="true">•</span>}
+            {line ? formatInlineMarkdown(line, lineIndex) : "\u00a0"}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function StepOutput({ output }) {
   if (!output) return null;
   if (typeof output === "string" && output.startsWith("data:image/")) return <img className="task-output-image" src={output} alt="Generated agent output" />;
-  return <div className="task-output-text">{String(output)}</div>;
+  return <FormattedText className="task-output-text" value={output} />;
 }
 
 // Lets a user leave feedback on a completed step, attributed to whichever
@@ -889,7 +919,11 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete })
   return (
     <article className={`task-card ${status}`}>
       <div className="task-card-head">
-        <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
+        <div className="task-prompt-block">
+          <span className="task-prompt-label">Original prompt</span>
+          <FormattedText className="task-prompt-text" value={task.input} />
+          <div className="task-meta">{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div>
+        </div>
         <div className="task-card-head-actions">
           <span className={`task-status ${status}`}>{status}</span>
           {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task"><TrashIcon /></button>}
@@ -961,10 +995,10 @@ function TasksView({ tasks, agents, connection, onCreate, onOpen, onDelete }) {
 function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext, onDelete }) {
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading task-detail-heading">
         <div>
           <button className="task-detail-back" type="button" onClick={onBack}>← All tasks</button>
-          <span className="eyebrow">Task</span>
+          <span className="eyebrow">Task brief</span>
         </div>
       </div>
       {task

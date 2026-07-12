@@ -889,7 +889,11 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onDelete })
   return (
     <article className={`task-card ${status}`}>
       <div className="task-card-head">
-        <div><h2>{task.input}</h2><div className="task-meta">{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div></div>
+        <div className="task-prompt-block">
+          <span className="task-prompt-label">Original prompt</span>
+          <p className="task-prompt-text">{task.input}</p>
+          <div className="task-meta">{formatDate(task.createdAt)}{executionModeLabel ? ` · ${executionModeLabel}` : ""}{directlyAssignedAgent ? ` · Assigned to ${directlyAssignedAgent.name}` : ""}{task.file ? ` · 📎 ${task.file.name}` : ""}</div>
+        </div>
         <div className="task-card-head-actions">
           <span className={`task-status ${status}`}>{status}</span>
           {onDelete && <button className="icon-button" type="button" onClick={() => onDelete(task)} aria-label="Delete task"><TrashIcon /></button>}
@@ -961,10 +965,10 @@ function TasksView({ tasks, agents, connection, onCreate, onOpen, onDelete }) {
 function TaskDetailView({ task, agents, onBack, onSuggestFeedback, onApplyContext, onDelete }) {
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading task-detail-heading">
         <div>
           <button className="task-detail-back" type="button" onClick={onBack}>← All tasks</button>
-          <span className="eyebrow">Task</span>
+          <span className="eyebrow">Task brief</span>
         </div>
       </div>
       {task

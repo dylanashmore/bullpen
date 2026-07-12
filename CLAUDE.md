@@ -509,13 +509,29 @@ than exactly when it's ready — accepted as a minor cosmetic gap, not a correct
 via Playwright testing 2026-07-11: a naive "wait for the form to close" test assertion had to be
 rewritten to "wait for step status done AND output changed" for exactly this reason).
 
-**Loading-state animation on "Suggest update" / "Regenerate" (fixed 2026-07-11):** both buttons
-previously just swapped their label to static text ("Thinking…" / would-be "Regenerating…") while
-awaiting a Gemini call that regularly takes 6-15+ seconds — with no animation, that reads as a
-frozen/broken button well before it actually resolves (this is what "suggest update doesn't work"
-turned out to be — the feature worked, but looked stuck). Both buttons now get a `loading`
-class (`.agent-instructions-actions .save.loading`) that hides the label text and overlays an
-animated pulsing "●●●" (`@keyframes save-loading-pulse`) for the duration of the request.
+**Loading-state animation on "Suggest update" / "Regenerate" / "Optimize with Gemini" (fixed
+2026-07-11):** these buttons previously just swapped their label to static text ("Thinking…",
+"Regenerating…", "Optimizing…") while awaiting a Gemini call that regularly takes 6-15+ seconds —
+with no animation, that reads as a frozen/broken button well before it actually resolves (this is
+what "suggest update doesn't work" turned out to be — the feature worked, but looked stuck).
+"Suggest update"/"Regenerate" get a `loading` class (`.agent-instructions-actions .save.loading`)
+that hides the label text and overlays an animated pulsing "●●●" (`@keyframes
+save-loading-pulse`); `OptimizeButton` (used everywhere — agent directive, task input, step
+feedback, iterate details, and now agent context, see below) reuses the same keyframes but
+pulses the whole button's opacity instead, since its label already carries useful info
+("Optimizing…") that hiding would lose.
+
+**Manually editable agent context (current, added 2026-07-11):** `AgentSetupSummary`'s edit form
+(`.agent-setup-editor`, a 2-column CSS grid) gained a `Context` textarea plus its own
+`OptimizeButton` (`kind="agent_directive"`, same reasoning as the step-feedback one) — previously
+`context` was shown read-only in the setup summary and could only be changed indirectly via the
+feedback→suggest→apply flow (`POST /api/agents/:id/feedback`), never edited directly.
+`agentToSetupForm()` and the form's `save()` now include `context` alongside every other setup
+field, submitted through the same existing generic `PATCH /api/agents/:id` — no backend changes
+needed, `context` was already a valid PATCH field. Both the new textarea and its `OptimizeButton`
+needed an explicit `grid-column: 1 / -1` rule (`.agent-setup-editor .optimize-row`) to span the
+full grid width like the other full-width fields; without it the button would only occupy one of
+the two grid columns.
 
 **Execution mode picker (current, added 2026-07-11):** `TaskDialog` has a Fast/Thorough radio
 group (`executionModes` array — id, label, one-line description) below the task-input field,

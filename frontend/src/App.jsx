@@ -367,7 +367,7 @@ function OptimizeButton({ text, kind, onOptimized, disabled }) {
   return (
     <div className="optimize-row">
       {error && <span className="optimize-error">{error}</span>}
-      <button type="button" className="optimize-button" onClick={run} disabled={disabled || optimizing || !text.trim()}>
+      <button type="button" className={`optimize-button${optimizing ? " loading" : ""}`} onClick={run} disabled={disabled || optimizing || !text.trim()}>
         <span className="model-red-dot" aria-hidden="true" />{optimizing ? "Optimizing…" : "Optimize with Gemini"}
       </button>
     </div>
@@ -649,6 +649,7 @@ function agentToSetupForm(agent) {
     tone: agent.tone || "",
     style: agent.style || "",
     inspiredBy: agent.inspiredBy || "",
+    context: agent.context || "",
   };
 }
 
@@ -677,6 +678,7 @@ function AgentSetupSummary({ agent, agents, dependencyName, onUpdate }) {
       tone: form.tone.trim() || null,
       style: form.style.trim() || null,
       inspiredBy: form.inspiredBy.trim() || null,
+      context: form.context.trim() || null,
     });
     setSaving(false);
     if (ok) setEditing(false);
@@ -702,6 +704,8 @@ function AgentSetupSummary({ agent, agents, dependencyName, onUpdate }) {
         <label className="quick-field"><span>Tone</span><input {...field("tone")} maxLength="80" placeholder="e.g. Confident and concise" /></label>
         <label className="quick-field full-width"><span>Visual style</span><input {...field("style")} maxLength="120" placeholder="e.g. Editorial, minimal, cinematic" /></label>
         <label className="quick-field full-width"><span>Inspired by</span><input {...field("inspiredBy")} maxLength="120" placeholder="e.g. Swiss design or Stripe's website" /></label>
+        <label className="quick-field full-width"><span>Context</span><textarea value={form.context} onChange={(event) => setForm((current) => ({ ...current, context: event.target.value }))} maxLength="500" rows="2" placeholder="Background this agent should know — company info, prior facts, constraints. Separate from how it should work." /></label>
+        <OptimizeButton text={form.context} kind="agent_directive" onOptimized={(value) => setForm((current) => ({ ...current, context: value }))} disabled={saving} />
         <label className={`file-capability-toggle${form.dependsOnAgent ? " disabled" : ""}`}>
           <input type="checkbox" checked={form.acceptsFiles} onChange={(event) => setForm((current) => ({ ...current, acceptsFiles: event.target.checked }))} disabled={Boolean(form.dependsOnAgent)} />
           <span><strong>Accept file uploads</strong><small>{form.dependsOnAgent ? "Only entry-point agents receive files" : "Allow files when this agent starts a task"}</small></span>

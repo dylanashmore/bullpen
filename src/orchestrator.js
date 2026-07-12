@@ -174,14 +174,20 @@ export async function runChain(task, fileBuffer, assignedAgentId = null) {
             previousContent = result.content;
             needsImage = result.needsImage;
             imagePrompt = result.imagePrompt;
+            // Any phase can flag needsImage, not just the last one — stop here
+            // rather than running a wasted (and actively counterproductive)
+            // further text-refinement phase on something that's already
+            // decided to be an image. See the comment on runAgentPromptPhase
+            // in geminiClient.js for why this replaced a final-phase-only check.
+            if (needsImage) break;
             if (phaseNumber < totalPhases && (await isCancelled(task.id))) {
               step.status = 'cancelled';
               return;
             }
           }
 
-          // No more dedicated "image" outputType — any agent's final phase can
-          // flag needsImage when Gemini itself judges the task calls for a
+          // No more dedicated "image" outputType — any agent phase can flag
+          // needsImage when Gemini itself judges the task calls for a
           // generated image rather than text, and the platform generates it here.
           let output;
           if (needsImage) {

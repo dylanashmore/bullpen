@@ -120,20 +120,36 @@ from `runChain()` in `orchestrator.js`; `getTextAgentPhaseCount(executionMode)` 
   imposed globally.
 
 ## Automatic image generation (added 2026-07-11, replaces the old `outputType: 'image'`)
-There is no more dedicated "image agent" you designate at creation time. Instead, every agent's
-**final** phase call (phase 1 in Fast mode, phase 2 in Thorough) can flag `needsImage: true`
-(plus an `imagePrompt` string) in its structured JSON response when Gemini itself judges the task
-is best answered with a generated image — a picture, logo, illustration, diagram, or design
-mockup — rather than text/structured content. The instruction telling the model about this
-capability, and to only decide it on the final phase, lives in `runAgentPromptPhase()`'s
-`systemInstruction` in `geminiClient.js`. When `runChain()` (`orchestrator.js`) sees `needsImage`
-come back true from the final phase, it sets `step.phase = 'Generating image'`, calls
-`generateImage(imagePrompt || <the phase's text content>)` (`imagenClient.js`, unchanged — still
-Imagen), and uses *that* as the step's `output` instead of the text `content`. Any agent can end
-up producing an image on one task and plain text on the next; there's nothing on the `Agent`
-object that predicts which. The frontend needed no changes for this — `StepOutput` already
-renders `output` as an `<img>` whenever it's a `data:image/...` string and as text otherwise,
-regardless of *why* it ended up that way.
+There is no more dedicated "image agent" you designate at creation time. Instead, **any** phase
+call can flag `needsImage: true` (plus an `imagePrompt` string) in its structured JSON response
+when Gemini itself judges the task is best answered with a generated image — a picture, logo,
+illustration, diagram, or design mockup — rather than text/structured content. The instruction
+telling the model about this capability lives in `runAgentPromptPhase()`'s `systemInstruction` in
+`geminiClient.js`. `runChain()` (`orchestrator.js`) checks `needsImage` after *every* phase, not
+just the last one, and breaks out of the phase loop the moment it's true; when it does, it sets
+`step.phase = 'Generating image'`, calls `generateImage(imagePrompt || <that phase's text
+content>)` (`imagenClient.js`, unchanged — still Imagen), and uses *that* as the step's `output`
+instead of the text `content`. Any agent can end up producing an image on one task and plain text
+on the next; there's nothing on the `Agent` object that predicts which. The frontend needed no
+changes for this — `StepOutput` already renders `output` as an `<img>` whenever it's a
+`data:image/...` string and as text otherwise, regardless of *why* it ended up that way.
+
+**Why "any phase," not just the final one (fixed 2026-07-11, same day as the initial build):** the
+first version only let the *final* phase set `needsImage`. In Thorough mode that broke real
+"design a flyer" tasks — phase 1's instruction was to gather "raw material," so it wrote a full
+text draft of the flyer's copy with no awareness an image might be the right format; by the time
+phase 2 ran, the model had ~2,500 characters of its own prior "work" sitting in front of it and
+just polished that into a nicer text document instead of reconsidering the format, even though
+the image-capability instruction was present in both calls' `systemInstruction`. Fix: phase 1 can
+now flag `needsImage` too (its own instruction says to skip straight to `imagePrompt` rather than
+drafting body copy when the deliverable is visual), and `runChain()`'s loop breaks the instant any
+phase reports `needsImage: true` — Thorough mode's second text-refinement pass never runs on
+something that's already been decided to be an image, so there's no anchoring text draft to derail
+the decision. The `needsImage` instruction itself also had to get considerably more forceful and
+literal (an explicit "if the task names a flyer/poster/logo/banner, you MUST set needsImage,
+'provide prompts for imagery' means describe what's ON the image, not write text instead of making
+it" rule) — a softer "use your judgment" phrasing kept losing to the sheer volume of text-shaped
+sub-requirements (headlines, hex codes, font names) in realistic design-brief-style task inputs.
 
 **Web access (updated 2026-07-11):** Thorough always passes
 `tools: [{ urlContext: {} }, { googleSearch: {} }]`; Fast passes them only when

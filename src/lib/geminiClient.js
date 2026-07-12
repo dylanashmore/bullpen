@@ -97,11 +97,11 @@ const PHASE_RESPONSE_SCHEMA = {
     },
     needsImage: {
       type: 'boolean',
-      description: 'Only meaningful on your final phase (always false otherwise): true if the best way to answer this task is a generated image (a picture, logo, illustration, diagram, design mockup, etc.) rather than words alone.',
+      description: 'True if the best way to answer this task is a generated image (a picture, logo, illustration, diagram, design mockup, etc.) rather than words alone. Decide this as early as you can, including on phase 1 — flagging it ends the phase sequence immediately, so do not spend a phase drafting body text first if the deliverable is clearly visual.',
     },
     imagePrompt: {
       type: 'string',
-      description: 'Only present when needsImage is true: a detailed, self-contained prompt describing exactly what image to generate (subject, style, composition, colors, mood). Omit otherwise.',
+      description: 'Only present when needsImage is true: a detailed, self-contained prompt describing exactly what image to generate (subject, style, composition, colors, mood, and any text that must appear on it). Omit otherwise.',
     },
   },
   required: ['phase', 'content'],
@@ -115,11 +115,16 @@ const OUTPUT_TOKEN_LIMITS = { fast: 8192, thorough: 16384 };
 // hardcoded phase list, since what "phase 1" means varies by agent/task.
 // The final phase's `content` is the step's actual output; earlier phases'
 // `content` is intermediate work product handed to the next phase as context.
-// On the final phase only, the model can also flag needsImage/imagePrompt —
+// Any phase — including phase 1 — can flag needsImage/imagePrompt instead;
 // every agent can produce an image dynamically when the task calls for one,
 // there's no separate "image agent" outputType anymore (removed 2026-07-11).
-// The caller (runChain in orchestrator.js) is what actually calls the image
-// generator when needsImage comes back true.
+// The caller (runChain in orchestrator.js) checks needsImage after *every*
+// phase and short-circuits the remaining phases when it's true, rather than
+// waiting for a "final" phase — an earlier version only checked the last
+// phase, but by then a prior text-drafting phase had already anchored the
+// model on a written answer, and it would just polish that instead of
+// reconsidering the format (caught 2026-07-11 via a real "design a flyer"
+// task that produced a text document instead of an image).
 export async function runAgentPromptPhase(agent, {
   input,
   phaseNumber,
@@ -133,10 +138,12 @@ export async function runAgentPromptPhase(agent, {
       ? `Complete the following task and produce the finished answer to hand back. Be direct and concise while ` +
         `fully satisfying every stated requirement.\n\nTask input:\n${input}`
       : phaseNumber === 1
-      ? `This is phase ${phaseNumber} of ${totalPhases} of this task — do the natural first part of the work only ` +
-        `(e.g. gathering, researching, or drafting raw material), not the final polished answer. Produce exactly ` +
-        `ONE version of this phase's work, not multiple alternative drafts/options to choose between, and keep ` +
-        `it as concise as the task allows.\n\nTask input:\n${input}`
+      ? `This is phase ${phaseNumber} of ${totalPhases} of this task. If the deliverable is clearly a visual ` +
+        `artifact (see the needsImage guidance below), skip straight to setting needsImage and a complete ` +
+        `imagePrompt now — do not spend this phase drafting written body copy first. Otherwise, do the natural ` +
+        `first part of the work only (e.g. gathering, researching, or drafting raw material), not the final ` +
+        `polished answer. Produce exactly ONE version of this phase's work, not multiple alternative ` +
+        `drafts/options to choose between, and keep it as concise as the task allows.\n\nTask input:\n${input}`
       : `This is the final phase (${phaseNumber} of ${totalPhases}) of this task. Using your own prior-phase work ` +
         `below, complete the task and produce the finished answer to hand back.\n\nOriginal task input:\n${input}` +
         `\n\nYour previous-phase work:\n${previousContent}`;
@@ -155,12 +162,21 @@ export async function runAgentPromptPhase(agent, {
     const webInstruction = useWebAccess
       ? '\n\nYou have real web access: fetch URLs mentioned in the input and use live search when it improves accuracy. Do not fabricate information you can verify.'
       : '';
-    const imageInstruction = '\n\nYou can also request a generated image instead of (or as) your final answer: if ' +
-      `this is your final phase (phase ${phaseNumber} of ${totalPhases}) and the task is best answered with a ` +
-      'picture, logo, illustration, diagram, or visual design rather than words, set needsImage to true and ' +
-      'imagePrompt to a detailed, self-contained description of exactly what to generate. Only decide this on ' +
-      'your final phase — leave needsImage false on every earlier phase, and leave it false whenever a normal ' +
-      'text/structured answer is what the task actually calls for; most tasks do not need an image.';
+    const imageInstruction = '\n\nYou can also request a generated image instead of a written answer. RULE: if ' +
+      'the task names a visual artifact as what it wants made — a "flyer", "poster", "banner", "logo", ' +
+      '"graphic", "illustration", "diagram", "social media image/post image", or similar — you MUST set ' +
+      'needsImage to true, no exceptions, even if: (a) most of the request is phrased as text requirements ' +
+      '(headlines, event details, color hex codes, font names, copy), or (b) the request asks you to "provide ' +
+      'prompts/ideas/concepts for imagery" — that phrasing describes what should visually appear on the ' +
+      'artifact, it is NOT a request for you to write those prompts out as text instead of making the thing. ' +
+      'The task asked for a flyer/poster/etc., so the deliverable is that image, full stop. When needsImage is ' +
+      'true, write imagePrompt as one self-contained image-generation prompt that folds in every piece of ' +
+      'required text (headline, dates, CTA, etc.), the color palette, and the visual concept, so the generated ' +
+      'image actually contains all of it — do not write any of that content out as a separate text document ' +
+      'instead. Decide this as early as you can, including on phase 1 — flagging needsImage ends the phase ' +
+      'sequence immediately, so do not draft written body copy in an earlier phase and only reconsider the ' +
+      'format at the end. Only leave needsImage false when the task is genuinely just asking for writing, ' +
+      'strategy, analysis, or data with no named visual artifact as the ask.';
     const systemInstruction = `${agent.buildSystemPrompt()}${webInstruction}${imageInstruction}\n\nRespond with ` +
       'ONLY the required JSON object (phase, content, and needsImage/imagePrompt when applicable) — no markdown ' +
       'code fences around it, no text outside it. The "content" field is where the "respond with only the ' +
@@ -193,7 +209,7 @@ export async function runAgentPromptPhase(agent, {
     return {
       phase: parsed.phase || `Phase ${phaseNumber}`,
       content: parsed.content,
-      needsImage: phaseNumber === totalPhases && Boolean(parsed.needsImage),
+      needsImage: Boolean(parsed.needsImage),
       imagePrompt: parsed.imagePrompt || undefined,
     };
   } catch (err) {

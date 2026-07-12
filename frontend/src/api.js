@@ -60,10 +60,13 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(fields),
   }),
-  updateAgentContext: (id, context) => request(`/api/agents/${encodeURIComponent(id)}`, {
+  // feedback, if passed, is purely a history tag — it's what lets the backend
+  // log this context change as "from feedback" (with the original feedback
+  // text) rather than "manual edit" in the agent's contextHistory.
+  updateAgentContext: (id, context, feedback) => request(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ context }),
+    body: JSON.stringify({ context, ...(feedback ? { feedback } : {}) }),
   }),
   // Drafts a suggested context update from feedback on a completed step —
   // does not persist anything; pair with updateAgentContext to apply it.

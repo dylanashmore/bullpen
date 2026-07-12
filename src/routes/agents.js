@@ -223,6 +223,25 @@ router.patch('/:id', async (req, res) => {
     if (body.context !== undefined) {
       const context = requireOptionalString('context', 'context');
       if (context === undefined) return;
+      // Only log an actual value change — re-saving the same context (e.g.
+      // submitting the setup form with nothing touched) shouldn't grow the
+      // history. `feedback`, if present, is purely a history tag: it's what
+      // the frontend sends when applying a feedback-drafted suggestion (see
+      // StepFeedback's apply flow) so this entry can be told apart from a
+      // manual edit in AgentSetupSummary, which sends context alone.
+      if (context !== agent.context) {
+        const feedback = typeof body.feedback === 'string' && body.feedback.trim() ? body.feedback.trim() : null;
+        agent.contextHistory = [
+          ...(agent.contextHistory || []),
+          {
+            timestamp: new Date().toISOString(),
+            previousContext: agent.context,
+            newContext: context,
+            source: feedback ? 'feedback' : 'manual',
+            feedback,
+          },
+        ];
+      }
       agent.context = context;
       changed = true;
     }

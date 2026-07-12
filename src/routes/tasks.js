@@ -144,6 +144,16 @@ router.post('/:id/steps/:agentId/iterate', async (req, res) => {
           await saveTask(task);
         },
       });
+      // Logged only on success — a failed iteration leaves the step exactly
+      // as it was (see the catch block below), so there's nothing to record.
+      // previousOutput is null when the prior output was an image (computed
+      // above as previousOutputText) rather than the raw data: URI — the
+      // frontend renders that as "(was an image)"; repeating a full base64
+      // image on every iteration would bloat the task record for no benefit.
+      step.iterations = [
+        ...(step.iterations || []),
+        { timestamp: new Date().toISOString(), details: details.trim(), previousOutput: previousOutputText },
+      ];
       step.output = output;
       step.phase = phase;
       step.status = 'done';

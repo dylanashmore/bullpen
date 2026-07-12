@@ -312,6 +312,17 @@
 .agent-setup-summary p strong { overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .edit-setup-button { display: block; width: 100%; margin-top: 2px; padding: 7px 9px; border: 0; border-top: 1px solid var(--line); color: var(--accent); background: transparent; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer; }
 .edit-setup-button:hover { background: rgba(140, 240, 181, 0.05); }
+.context-history { border-top: 1px solid var(--line); }
+.context-history summary { padding: 7px 9px; color: var(--subtle); font-size: 7px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.context-history summary:hover { color: var(--muted); }
+.context-history-list { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; padding: 0 9px 9px; }
+.context-history-entry { padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: rgba(3, 10, 8, 0.4); }
+.context-history-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; font-family: var(--font-mono); font-size: 7px; text-transform: uppercase; }
+.context-history-meta > span:first-child { color: var(--subtle); }
+.context-history-source { padding: 2px 6px; border-radius: 20px; color: var(--muted); background: var(--surface-soft); }
+.context-history-source.feedback { color: var(--accent); background: rgba(140, 240, 181, 0.1); }
+.context-history-feedback { margin: 0 0 4px; color: var(--subtle); font-size: 10px; font-style: italic; line-height: 1.45; }
+.context-history-value { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .agent-setup-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; margin: -6px 0 14px; }
 .agent-setup-editor .quick-field.full-width { grid-column: 1 / -1; }
 .agent-setup-editor .optimize-row { grid-column: 1 / -1; margin-top: -6px; }
@@ -471,6 +482,14 @@
 .formatted-bullet { position: absolute; left: 1px; color: var(--accent); }
 .formatted-line.heading { color: var(--text); font-weight: 700; }
 .task-output-image { display: block; width: min(100%, 560px); margin: 0 11px 12px; border-radius: 8px; }
+.step-history { margin: 0 11px 12px; }
+.step-history summary { color: var(--accent); font-size: 10px; font-weight: 700; cursor: pointer; }
+.step-history summary:hover { text-decoration: underline; }
+.step-history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 220px; overflow-y: auto; }
+.step-history-entry { padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: rgba(3, 10, 8, 0.4); }
+.step-history-date { display: block; margin-bottom: 3px; color: var(--subtle); font-family: var(--font-mono); font-size: 7px; text-transform: uppercase; }
+.step-history-detail { margin: 0 0 4px; color: var(--text); font-size: 11px; font-style: italic; line-height: 1.45; }
+.step-history-previous { margin: 0; overflow: hidden; color: var(--subtle); font-size: 10px; line-height: 1.4; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .step-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 18px; margin: 0 11px 12px; }
 .step-feedback-toggle { display: block; margin: 0; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .step-feedback-toggle:hover { text-decoration: underline; }

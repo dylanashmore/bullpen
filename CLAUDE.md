@@ -224,6 +224,8 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   auto-merge would degrade it for the whole team, not just the person who gave the feedback.
 - `DELETE /api/agents/:id` → removes an agent unless another agent depends on it (409).
 - `GET /health` → `{ ok, geminiConfigured }`; reports key presence without exposing the key.
+- `GET /api/workspace` → `{ profile }`; loads the persisted onboarding business description,
+  goal, and time horizon. `PUT /api/workspace` validates and saves `{ description, goal, term }`.
 - `GET /api/tasks` → task feed, newest first. Each task: `{ id, input, executionMode, status,
   steps[], createdAt, file, fileWarning? }`. Each step: `{ agentId, status, output, phase? }`, step status
   one of `pending|working|done|error|cancelled`. `phase` (**added 2026-07-11**, string, only
@@ -244,6 +246,10 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
     tasks with an attachment. `input` is still required and validated the same way either way.
     Max upload size 20MB, one file per task. The response's `file` field reflects what was
     attached (or `null` for the JSON path).
+- `POST /api/tasks/suggestions` → asks Gemini for four ready-to-run next tasks using the saved
+  business profile, agent roster, active work, and recent completed outcomes. Returns
+  `{ suggestions: [{ title, prompt, rationale }] }`. Active/completed tasks prevent duplicate
+  suggestions, and image data URIs are removed before the context is sent to Gemini.
 - `POST /api/tasks/:id/cancel` → cooperatively cancels a pending/working task, marks unfinished
   steps `cancelled`, and returns involved agents to `idle`. An in-flight provider request cannot
   be forcibly terminated, but its eventual result is discarded and cannot revive the task.
@@ -294,10 +300,11 @@ src/
                          imagePrompt), optimizeText() (the "Optimize with Gemini" rewrite),
                          generateContentWithRetry() (retries transient Gemini 503s, retry count
                          varies by execution mode), askOrchestrator() (routing via function
-                         calling), suggestContextFromFeedback() (drafts a context update from
-                         step feedback, or null if nothing durable), draftTeamForBusiness()
-                         (drafts a starting roster for the mandatory onboarding flow, structured
-                         JSON output) — none of the draft/suggestion calls run automatically
+                          calling), suggestContextFromFeedback() (drafts a context update from
+                          step feedback, or null if nothing durable), draftTeamForBusiness()
+                          (drafts a starting roster for the mandatory onboarding flow, structured
+                          JSON output), suggestTasksForWorkspace() (four business-aware next-task
+                          recommendations) — none of the draft/suggestion calls run automatically
     imagenClient.js    — generateImage(), returns a data:image/png;base64,... string, called
                          from runChain() whenever an agent's final phase flags needsImage
     persistence.js     — shared Redis client (`@upstash/redis`) built from KV/Upstash env vars,
@@ -305,6 +312,9 @@ src/
     taskStore.js       — task feed (createTask, getAllTasks, getTaskById, saveTask — write-back
                          after mutating a fetched task, removeTask — deletes a task's record
                          outright), Redis-backed via persistence.js with an in-memory fallback
+    workspaceStore.js  — persisted onboarding business profile with Redis/memory modes
+    taskSuggestions.js — builds bounded suggestion context from the profile, roster, active
+                         work, and completed outcomes without embedding image payloads
   orchestrator.js      — pickChainForTask() (routing + dependency expansion), runChain()
                          (level-based execution, sequential deps + parallel independents, hands
                          an optional file buffer to accepting root agents, generates an image
@@ -324,16 +334,19 @@ src/
                          an optional multipart file upload alongside the JSON path;
                          POST /:id/cancel and DELETE /:id round out the task lifecycle;
                          POST /:id/steps/:agentId/iterate re-runs one done step with extra
-                         guidance and replaces its output in place
+                         guidance and replaces its output in place; POST /suggestions generates
+                         Gemini-recommended next tasks
+    workspace.js       — GET/PUT /api/workspace business profile
   app.js               — Express app wiring (routes, CORS, JSON/error middleware, /health):
                          the shared module imported by both server.js and api/[...path].js
   server.js             — local dev entrypoint only: loads .env, calls app.listen()
 api/
   [...path].js          — Vercel serverless entrypoint for one-segment endpoints such as
-                         /api/health, /api/agents, /api/tasks, and /api/optimize
+                         /api/health, /api/agents, /api/tasks, /api/workspace, and /api/optimize
   agents/               — explicit Vercel entrypoints for /api/agents/:id,
                          /api/agents/:id/feedback, and /api/agents/draft-team
-  tasks/                — explicit Vercel entrypoints for /api/tasks/:id (DELETE),
+  tasks/                — explicit Vercel entrypoints for /api/tasks/suggestions (POST),
+                         /api/tasks/:id (DELETE),
                          /api/tasks/:id/cancel (POST), and
                          /api/tasks/:id/steps/:agentId/iterate (POST). These nested files are
                          required because Vercel's Vite-generated route manifest
@@ -351,7 +364,9 @@ api/
                          structurally ruled out either.
 scripts/
   test-requests.js      — `npm run test:api`, exercises agent creation, single-agent task,
-                         and full media pipeline against a running local server
+                          and full media pipeline against a running local server
+  test-task-suggestions.js — validates profile persistence, context bounding, and suggestion
+                             route preconditions without spending a Gemini call
 frontend/                — see "Frontend" section below
 ```
 
@@ -414,8 +429,10 @@ frontend/
 Agents load from `GET /api/agents`; create, model update, and remove operations call the matching
 API routes. Tasks submit raw orchestrator input (plus one optional file), poll every 2 seconds,
 and render live task/step status, text or image output, upload metadata, warnings, and errors.
-The sidebar reports backend/key readiness. Browser `localStorage` is no longer the source of
-truth; both backend stores are in memory and reset when the backend restarts.
+The task page's **Gemini Suggested Tasks** button opens four business-aware recommendations and
+prefills the selected prompt into the normal editable task dialog.
+The sidebar reports backend/key readiness. Browser `localStorage` is not the source of truth;
+agent, task, and workspace-profile stores use Redis in production with in-memory local fallbacks.
 
 **Business onboarding (current, mandatory on an empty roster):** `BusinessOnboarding` replaces
 the manual creation form entirely until at least one agent exists — there is no "skip this" or
@@ -426,8 +443,9 @@ goal, and a short-/long-term `<select>`, all `required`) that calls `POST
 short-term drafts don't get one) with a per-card remove button. Nothing is created during
 drafting — "Add N agents to Bullpen" loops the kept rows through the same `onCreate` handler
 the manual form uses (`POST /api/agents`, one call per agent, sequential), and any card the
-user removed just never gets created. Same "preview, never silent" pattern as every other
-Gemini-assisted feature in this app.
+user removed just never gets created. It then persists the intake through `PUT /api/workspace`
+so task suggestions retain the business focus after reloads. Same "preview, never silent"
+pattern as every other Gemini-assisted feature in this app.
 
 **Agent creation flow (current, once the roster is non-empty):** the "New agent" /
 `QuickCreateAgent` form — used for adding *more* agents after the mandatory onboarding above has

@@ -481,7 +481,7 @@ function QuickCreateAgent({ availableAgents = [], onCreate, disabled }) {
 // anything gets created. Nothing is created during drafting itself; each kept
 // row goes through the completely ordinary onCreate (POST /api/agents) path,
 // one at a time, only when the user confirms.
-function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
+function BusinessOnboarding({ onDraftTeam, onCreate, onSaveProfile, connection }) {
   const [step, setStep] = useState("intake"); // "intake" | "reviewing"
   const [description, setDescription] = useState("");
   const [goal, setGoal] = useState("");
@@ -535,6 +535,7 @@ function BusinessOnboarding({ onDraftTeam, onCreate, connection }) {
         context: item.context.trim() || null,
       });
     }
+    await onSaveProfile({ description: description.trim(), goal: goal.trim(), term });
     setCreating(false);
   }
 
@@ -781,9 +782,9 @@ function AgentCard({ agent, agents, dependencyName, assignedTask, taskCount, onO
   );
 }
 
-function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
+function AgentsView({ agents, tasks, connection, onCreate, onDraftTeam, onSaveProfile, onOpenTask, onStopTask, onUpdateInstructions, onUpdateSetup, onRemove, onModelChange }) {
   const workingCount = agents.filter((agent) => agent.status === "working").length;
-  if (agents.length === 0) return <BusinessOnboarding onDraftTeam={onDraftTeam} onCreate={onCreate} connection={connection} />;
+  if (agents.length === 0) return <BusinessOnboarding onDraftTeam={onDraftTeam} onCreate={onCreate} onSaveProfile={onSaveProfile} connection={connection} />;
   return (
     <>
       <div className="page-heading"><div><span className="eyebrow">Your team</span><h1>Your Bullpen</h1><p>Build your roster and give every Gemini agent a clear job.</p></div></div>
@@ -1024,12 +1025,17 @@ function TaskListRow({ task, agents, onOpen, onDelete }) {
   );
 }
 
-function TasksView({ tasks, agents, connection, onCreate, onOpen, onDelete }) {
+function TasksView({ tasks, agents, connection, suggestionsLoading, onSuggest, onCreate, onOpen, onDelete }) {
   return (
     <>
       <div className="page-heading">
         <div><span className="eyebrow">Call the play</span><h1>Task feed</h1><p>Describe the outcome. Gemini will route it through the right agents automatically.</p></div>
-        <button className="button primary" type="button" onClick={() => onCreate()}><span aria-hidden="true">+</span> Run a task</button>
+        <div className="page-heading-actions">
+          <button className="button secondary gemini-suggest-button" type="button" onClick={onSuggest} disabled={!connection.online || !connection.geminiConfigured || suggestionsLoading}>
+            <span className="gemini-glyph" aria-hidden="true">✦</span>{suggestionsLoading ? "Finding tasks…" : "Gemini Suggested Tasks"}
+          </button>
+          <button className="button primary" type="button" onClick={() => onCreate()}><span aria-hidden="true">+</span> Run a task</button>
+        </div>
       </div>
       {!connection.geminiConfigured && <div className="api-key-banner"><strong>Gemini API key needed</strong><span>Add <code>GEMINI_API_KEY</code> to the root <code>.env</code> file and restart the backend to run tasks.</span></div>}
       <div className="task-list">
@@ -1067,7 +1073,43 @@ function useDialog(open, dialogRef) {
   }, [open, dialogRef]);
 }
 
-function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
+function SuggestedTasksDialog({ open, loading, suggestions, onRefresh, onChoose, onClose }) {
+  const dialogRef = useRef(null);
+  useDialog(open, dialogRef);
+
+  return (
+    <dialog className="modal suggested-tasks-modal" ref={dialogRef} onClose={onClose} onCancel={onClose}>
+      <div className="suggested-tasks-panel">
+        <div className="modal-heading">
+          <div><span className="eyebrow">Powered by Gemini</span><h2>Suggested tasks</h2></div>
+          <button className="icon-button modal-close" type="button" onClick={onClose} aria-label="Close suggested tasks">×</button>
+        </div>
+        <p className="modal-helper">Recommendations based on your business focus, active work, and completed tasks.</p>
+        {loading ? (
+          <div className="suggested-tasks-loading"><span className="gemini-glyph" aria-hidden="true">✦</span><strong>Gemini is planning your next moves…</strong></div>
+        ) : suggestions.length > 0 ? (
+          <div className="suggested-task-list">
+            {suggestions.map((suggestion, index) => (
+              <article className="suggested-task-card" key={`${suggestion.title}-${index}`}>
+                <div><span>{String(index + 1).padStart(2, "0")}</span><h3>{suggestion.title}</h3></div>
+                <p>{suggestion.rationale}</p>
+                <button className="button secondary" type="button" onClick={() => onChoose(suggestion.prompt)}>Use this task</button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="suggested-tasks-empty"><strong>No suggestions yet</strong><span>Try asking Gemini again.</span></div>
+        )}
+        <footer className="modal-actions">
+          <button className="button secondary" type="button" onClick={onRefresh} disabled={loading}>Refresh suggestions</button>
+          <button className="button primary" type="button" onClick={onClose}>Done</button>
+        </footer>
+      </div>
+    </dialog>
+  );
+}
+
+function TaskDialog({ open, canRun, targetAgent, initialInput, onClose, onCreate }) {
   const dialogRef = useRef(null);
   const [input, setInput] = useState("");
   const [file, setFile] = useState(null);
@@ -1077,11 +1119,11 @@ function TaskDialog({ open, canRun, targetAgent, onClose, onCreate }) {
 
   useEffect(() => {
     if (!open) return;
-    setInput("");
+    setInput(initialInput || "");
     setFile(null);
     setExecutionMode("fast");
     setSubmitting(false);
-  }, [open]);
+  }, [open, initialInput]);
 
   async function submit(event) {
     event.preventDefault();
@@ -1132,6 +1174,10 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [taskTargetAgent, setTaskTargetAgent] = useState(null);
+  const [taskInitialInput, setTaskInitialInput] = useState("");
+  const [suggestedTasksOpen, setSuggestedTasksOpen] = useState(false);
+  const [suggestedTasksLoading, setSuggestedTasksLoading] = useState(false);
+  const [suggestedTasks, setSuggestedTasks] = useState([]);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const hasWorkspaceContent = agents.length > 0 || tasks.length > 0;
@@ -1172,6 +1218,7 @@ export default function App() {
       setRoute(window.location.pathname.replace(/\/+$/, "") || "/");
       setMenuOpen(false);
       setTaskDialogOpen(false);
+      setSuggestedTasksOpen(false);
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -1238,6 +1285,16 @@ export default function App() {
     } catch (error) {
       notify(error.message);
       return null;
+    }
+  }
+
+  async function saveWorkspaceProfile(payload) {
+    try {
+      await api.saveWorkspaceProfile(payload);
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
     }
   }
 
@@ -1326,13 +1383,37 @@ export default function App() {
     }
   }
 
-  function openTaskDialog(targetAgent = null) {
+  function openTaskDialog(targetAgent = null, initialInput = "") {
     if (!connection.online) {
       notify(IS_LOCAL_DEV ? "Start the Bullpen backend before running a task." : "The Bullpen service is temporarily unavailable.");
       return;
     }
     setTaskTargetAgent(targetAgent);
+    setTaskInitialInput(initialInput);
     setTaskDialogOpen(true);
+  }
+
+  async function loadSuggestedTasks() {
+    if (!connection.online || !connection.geminiConfigured) {
+      notify("Gemini must be connected before suggesting tasks.");
+      return;
+    }
+    setSuggestedTasksOpen(true);
+    setSuggestedTasksLoading(true);
+    try {
+      const { suggestions } = await api.suggestTasks();
+      setSuggestedTasks(Array.isArray(suggestions) ? suggestions : []);
+    } catch (error) {
+      notify(error.message);
+      setSuggestedTasks([]);
+    } finally {
+      setSuggestedTasksLoading(false);
+    }
+  }
+
+  function chooseSuggestedTask(prompt) {
+    setSuggestedTasksOpen(false);
+    openTaskDialog(null, prompt);
   }
 
   async function createTask(data) {
@@ -1409,6 +1490,8 @@ export default function App() {
     try { sessionStorage.removeItem(AUTH_KEY); } catch { /* Session persistence is optional. */ }
     setAuthenticated(false);
     setMenuOpen(false);
+    setTaskDialogOpen(false);
+    setSuggestedTasksOpen(false);
     navigatePath("/");
   }
 
@@ -1445,13 +1528,14 @@ export default function App() {
           {hasWorkspaceContent && <button className="icon-button mobile-menu floating-menu" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation" aria-expanded={menuOpen}><MenuIcon /></button>}
           <section className="page-view active" aria-label={view === "agents" ? "Agents" : "Tasks"}>
             {view === "agents"
-              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
+              ? <AgentsView agents={agents} tasks={tasks} connection={connection} onCreate={createAgent} onDraftTeam={draftTeamForBusiness} onSaveProfile={saveWorkspaceProfile} onOpenTask={openTaskDialog} onStopTask={stopAgentTask} onUpdateInstructions={updateAgentInstructions} onUpdateSetup={updateAgentSetup} onRemove={removeAgent} onModelChange={changeAgentModel} />
               : view === "task-detail"
                 ? <TaskDetailView task={tasks.find((task) => task.id === taskDetailId)} agents={agents} onBack={() => navigate("tasks")} onSuggestFeedback={suggestFeedbackContext} onApplyContext={applyAgentContext} onIterate={iterateStep} onDelete={deleteTask} />
-                : <TasksView tasks={tasks} agents={agents} connection={connection} onCreate={openTaskDialog} onOpen={openTask} onDelete={deleteTask} />}
+                : <TasksView tasks={tasks} agents={agents} connection={connection} suggestionsLoading={suggestedTasksLoading} onSuggest={loadSuggestedTasks} onCreate={openTaskDialog} onOpen={openTask} onDelete={deleteTask} />}
           </section>
         </main>
-        <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); }} onCreate={createTask} />
+        <SuggestedTasksDialog open={suggestedTasksOpen} loading={suggestedTasksLoading} suggestions={suggestedTasks} onRefresh={loadSuggestedTasks} onChoose={chooseSuggestedTask} onClose={() => setSuggestedTasksOpen(false)} />
+        <TaskDialog open={taskDialogOpen} canRun={connection.online && connection.geminiConfigured} targetAgent={taskTargetAgent} initialInput={taskInitialInput} onClose={() => { setTaskDialogOpen(false); setTaskTargetAgent(null); setTaskInitialInput(""); }} onCreate={createTask} />
         <Toast message={toast} />
       </div>
     </>

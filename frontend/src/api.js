@@ -79,6 +79,11 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ description, goal, term }),
   }),
+  saveWorkspaceProfile: ({ description, goal, term }) => request("/api/workspace", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description, goal, term }),
+  }),
   deleteAgent: (id) => request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   optimizeText: (text, kind) => request("/api/optimize", {
     method: "POST",
@@ -86,6 +91,7 @@ export const api = {
     body: JSON.stringify({ text, kind }),
   }),
   getTasks: () => request("/api/tasks"),
+  suggestTasks: () => request("/api/tasks/suggestions", { method: "POST" }),
   cancelTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   deleteTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // Re-runs one already-completed step with extra guidance, replacing its

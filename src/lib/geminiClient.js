@@ -6,6 +6,7 @@ import { DEFAULT_AGENT_MODEL } from './models.js';
 const ORCHESTRATOR_MODEL = 'gemini-3.5-flash';
 const CONTEXT_SUGGESTION_MODEL = 'gemini-3.5-flash';
 const TEAM_DRAFT_MODEL = 'gemini-3.5-flash';
+const TASK_SUGGESTION_MODEL = 'gemini-3.5-flash';
 
 const FILE_PROCESSING_TIMEOUT_MS = 30_000;
 const FILE_PROCESSING_POLL_INTERVAL_MS = 1500;
@@ -345,6 +346,54 @@ export async function draftTeamForBusiness({ description, goal, term }) {
     return Array.isArray(parsed.agents) ? parsed.agents : [];
   } catch (err) {
     throw new Error(`draftTeamForBusiness failed: ${err.message}`);
+  }
+}
+
+// Generates concrete, ready-to-run next tasks from the workspace's business
+// focus, available agents, active work, and recent completed outcomes.
+export async function suggestTasksForWorkspace(context) {
+  try {
+    const response = await generateContentWithRetry({
+      model: TASK_SUGGESTION_MODEL,
+      contents:
+        'Use this workspace context to recommend exactly four valuable next tasks:\n\n' +
+        JSON.stringify(context),
+      config: {
+        systemInstruction:
+          'You are an operations advisor inside a multi-agent business workspace. Suggest concrete tasks that ' +
+          'advance the business\'s stated focus and can be completed by the available agent roster. Use completed ' +
+          'work to propose logical next steps, but do not repeat completed tasks. Do not duplicate anything active. ' +
+          'Each prompt must be specific and ready to submit directly to the agents, not a vague idea or a question. ' +
+          'Return exactly four varied suggestions ordered by expected business value.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            suggestions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string', description: 'A concise action-oriented task title.' },
+                  prompt: { type: 'string', description: 'A detailed, ready-to-run task prompt.' },
+                  rationale: { type: 'string', description: 'One short sentence explaining why this is valuable now.' },
+                },
+                required: ['title', 'prompt', 'rationale'],
+              },
+            },
+          },
+          required: ['suggestions'],
+        },
+      },
+    });
+    const text = response.text;
+    if (!text) throw new Error('Gemini returned an empty response');
+    const parsed = JSON.parse(text);
+    return (Array.isArray(parsed.suggestions) ? parsed.suggestions : [])
+      .filter((suggestion) => suggestion?.title && suggestion?.prompt && suggestion?.rationale)
+      .slice(0, 4);
+  } catch (err) {
+    throw new Error(`suggestTasksForWorkspace failed: ${err.message}`);
   }
 }
 

@@ -430,13 +430,13 @@
 .task-detail-heading { align-items: flex-start; margin-bottom: 18px; }
 .task-detail-back { display: flex; align-items: center; margin-bottom: 10px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 11px; font-weight: 600; cursor: pointer; }
 .task-detail-back:hover { text-decoration: underline; }
-.task-card { position: relative; overflow: hidden; padding: 24px 26px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.02); }
+.task-card { position: relative; overflow: hidden; padding: 20px 22px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.02); }
 .task-card.error { border-left: 3px solid var(--bullpen-red); background: linear-gradient(90deg, var(--bullpen-red-soft), rgba(255, 255, 255, 0.02) 24%); }
 .task-card.done { border-color: rgba(140, 240, 181, 0.18); }
-.task-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.task-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
 .task-prompt-block { min-width: 0; flex: 1 1 auto; }
 .task-prompt-label { display: block; color: var(--accent); font-family: var(--font-mono); font-size: 9px; font-weight: 500; letter-spacing: 0.13em; text-transform: uppercase; }
-.task-prompt-text { max-width: 76ch; margin: 9px 0 14px; overflow-wrap: anywhere; color: var(--text); font-size: clamp(17px, 1.7vw, 21px); font-weight: 550; letter-spacing: -0.018em; line-height: 1.62; white-space: pre-wrap; text-wrap: pretty; }
+.task-prompt-text { max-width: 78ch; margin: 7px 0 11px; overflow-wrap: anywhere; color: var(--text); font-size: 15px; font-weight: 500; line-height: 1.65; text-wrap: pretty; }
 .task-card-head-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .task-meta { color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.6; text-transform: uppercase; }
 .task-status { flex: 0 0 auto; padding: 4px 8px; border-radius: 20px; color: var(--muted); background: var(--surface-soft); font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; }
@@ -460,7 +460,12 @@
 .task-step.done summary span:last-child { color: var(--accent); }
 .task-step.error summary span:last-child { color: var(--bullpen-red-bright); }
 .task-step.cancelled summary span:last-child { color: var(--bullpen-red-bright); }
-.task-output-text { max-height: 260px; overflow: auto; padding: 0 11px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.task-output-text { max-height: 260px; overflow: auto; padding: 0 11px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.formatted-line { display: block; min-height: 1.6em; white-space: pre-wrap; }
+.formatted-line strong { color: var(--text); font-weight: 700; }
+.formatted-line.bullet { position: relative; padding-left: 14px; }
+.formatted-bullet { position: absolute; left: 1px; color: var(--accent); }
+.formatted-line.heading { color: var(--text); font-weight: 700; }
 .task-output-image { display: block; width: min(100%, 560px); margin: 0 11px 12px; border-radius: 8px; }
 .step-feedback-toggle { display: block; margin: 0 11px 12px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .step-feedback-toggle:hover { text-decoration: underline; }
@@ -470,7 +475,7 @@
 .step-feedback-form textarea:focus { border-color: var(--accent); }
 .step-feedback-suggestion span { display: block; margin-bottom: 6px; color: var(--subtle); font-size: 7px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
 .step-feedback-suggestion p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.task-progress { height: 2px; margin: 20px -26px -24px; overflow: hidden; background: var(--line); }
+.task-progress { height: 2px; margin: 16px -22px -20px; overflow: hidden; background: var(--line); }
 .task-progress span { display: block; width: 38%; height: 100%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: task-loading 1.5s ease-in-out infinite; }
 @keyframes task-loading { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
 .list-empty { padding: 70px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
@@ -551,11 +556,11 @@
   .modal form { padding: 21px; }
   .modal-actions .button { flex: 1; }
   .execution-mode-options { grid-template-columns: 1fr; }
-  .task-card { padding: 19px; }
+  .task-card { padding: 18px; }
   .task-card-head { flex-direction: column; gap: 14px; padding-bottom: 18px; }
   .task-card-head-actions { width: 100%; justify-content: flex-end; }
-  .task-prompt-text { margin-top: 7px; font-size: 17px; line-height: 1.58; }
-  .task-progress { margin-right: -19px; margin-bottom: -19px; margin-left: -19px; }
+  .task-prompt-text { font-size: 15px; line-height: 1.6; }
+  .task-progress { margin-right: -18px; margin-bottom: -18px; margin-left: -18px; }
   .api-key-banner { align-items: flex-start; flex-direction: column; }
   .advanced-settings-grid { grid-template-columns: 1fr; }
   .advanced-settings-grid .quick-field { grid-column: 1; }

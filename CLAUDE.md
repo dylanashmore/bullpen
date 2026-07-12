@@ -186,7 +186,11 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
 ## Locked API contract
 - `GET /api/agents` → array of agent objects (`Agent.toJSON()` shape: `id, name, role,
   inputType, outputType, dependsOnAgent, tone, status, acceptsFiles, specialty, directive,
-  model, style, inspiredBy, context`)
+  model, style, inspiredBy, context, contextHistory`). `contextHistory` (**added 2026-07-11**) is
+  `[{ timestamp, previousContext, newContext, source: "manual" | "feedback", feedback }]`, oldest
+  first, appended to by `PATCH /api/agents/:id` (see below) whenever `context` actually changes
+  value — re-submitting the same context (e.g. saving the setup form with nothing touched) does
+  not add an entry. Empty array on a freshly created agent; nothing writes to it at creation.
 - `POST /api/agents` → body `{ name, role, inputType, outputType, dependsOnAgent, tone,
   acceptsFiles }`, creates an agent. `name/role/inputType/outputType` required;
   `dependsOnAgent` must reference an existing agent id if provided; `acceptsFiles` optional
@@ -204,7 +208,13 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   creation; `dependsOnAgent` is validated for existence and checked against creating a
   dependency cycle (walks the chain via `wouldCreateCycle` in `routes/agents.js` —
   self-reference and any multi-hop loop are both rejected with 400, since nothing else in the
-  codebase prevented this before, even at creation). At least one field must be provided.
+  codebase prevented this before, even at creation). At least one field must be provided. Body
+  may also include `feedback` (**added 2026-07-11**, string, optional) alongside `context` —
+  purely a history tag, not a separate write: when present and `context` actually changed, the
+  new `contextHistory` entry is logged `source: "feedback"` with that text attached; when
+  `context` changes without it, it's logged `source: "manual"`. This is how the frontend tells
+  `AgentSetupSummary`'s manual edits (sends `context` alone) apart from `StepFeedback`'s "Apply
+  to context" (sends both) in the resulting history, without a second endpoint.
 - `POST /api/agents/draft-team` → body `{ description, goal, term }`, all three required;
   `term` must be `"short"` or `"long"`. **Suggestion-only — never creates anything.** One
   Gemini call (`draftTeamForBusiness` in `geminiClient.js`, structured JSON output) drafts a
@@ -266,7 +276,13 @@ image generation" above) doesn't get this — Imagen's `generateImages` call has
   losing the last good result; the error surfaces as a normal failed-request toast on the
   frontend. Distinct from `POST /api/agents/:id/feedback`: that drafts a durable context update
   for the agent's *future* tasks and never touches this task; this endpoint fixes *this* task's
-  actual result right now and never touches the agent's context.
+  actual result right now and never touches the agent's context. Every *successful* call also
+  appends to `step.iterations` (**added 2026-07-11**) — `[{ timestamp, details, previousOutput }]`,
+  oldest first — so `GET /api/tasks` carries a full log of what was asked for and when, not just
+  the current output. `previousOutput` is `null` when the step's prior output was an image rather
+  than text, to avoid repeating a full base64 image on every iteration; the frontend renders that
+  case as "(an image)". A failed iteration logs nothing, matching how it leaves `step.output`
+  untouched.
 - `POST /api/optimize` (**added 2026-07-11**) → body `{ text, kind? }`, `kind` is
   `"agent_directive" | "task_input"` (defaults to a task-prompt rewrite if omitted). Rewrites
   `text` via Gemini for clarity/effectiveness and returns `{ optimized }`. Powers the "Optimize
@@ -509,6 +525,15 @@ than exactly when it's ready — accepted as a minor cosmetic gap, not a correct
 via Playwright testing 2026-07-11: a naive "wait for the form to close" test assertion had to be
 rewritten to "wait for step status done AND output changed" for exactly this reason).
 
+**Iteration history (current, added 2026-07-11):** `StepIterationHistory` renders `step.iterations`
+(see the `/iterate` route above) as a collapsed `<details>` — "Iteration history (N)" — placed
+between `StepOutput` and the `.step-actions` row, so it's visible regardless of whether either
+form is currently open. Newest first (the array itself is oldest-first, as written by the
+backend; the component reverses it for display). Each entry shows its date, the `details` text
+that was requested (quoted, to distinguish it from the app's own copy), and what the output *was*
+before that iteration — `"Was: (an image)"` when `previousOutput` is `null`. Nothing here is
+editable; it's a read-only log, same spirit as `ContextHistory` below.
+
 **Loading-state animation on "Suggest update" / "Regenerate" / "Optimize with Gemini" (fixed
 2026-07-11):** these buttons previously just swapped their label to static text ("Thinking…",
 "Regenerating…", "Optimizing…") while awaiting a Gemini call that regularly takes 6-15+ seconds —
@@ -532,6 +557,18 @@ needed, `context` was already a valid PATCH field. Both the new textarea and its
 needed an explicit `grid-column: 1 / -1` rule (`.agent-setup-editor .optimize-row`) to span the
 full grid width like the other full-width fields; without it the button would only occupy one of
 the two grid columns.
+
+**Context history (current, added 2026-07-11):** `ContextHistory` renders `agent.contextHistory`
+(see `PATCH /api/agents/:id` above) inside `AgentSetupSummary`'s read-only view, below the
+existing field list — a collapsed `<details>`, "Context history (N)", newest entry first. Each
+entry shows its date, a `"Manual edit"` or `"From feedback"` badge (`.context-history-source`,
+colored to match), the quoted feedback text when the source was feedback, and the resulting
+context value. This is what makes the "manual edit" vs "apply from feedback" distinction (see
+`PATCH /api/agents/:id`'s new optional `feedback` body field above) actually visible — both paths
+still end up as the exact same field (`agent.context`), and this history is the only place the
+two are told apart after the fact. `applyAgentContext(id, context, feedback)` in `App` and
+`StepFeedback`'s `apply()` were both updated to pass the original feedback text through;
+`AgentSetupSummary`'s own `save()` never does, so its edits are always logged `"manual"`.
 
 **Execution mode picker (current, added 2026-07-11):** `TaskDialog` has a Fast/Thorough radio
 group (`executionModes` array — id, label, one-line description) below the task-input field,

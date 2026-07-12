@@ -734,7 +734,34 @@ function AgentSetupSummary({ agent, agents, dependencyName, onUpdate }) {
     <details className="agent-setup-summary">
       <summary>Agent setup <span>View</span></summary>
       <div>{items.map(([label, value]) => <p key={label}><span>{label}</span><strong>{value}</strong></p>)}</div>
+      <ContextHistory history={agent.contextHistory} />
       <button type="button" className="edit-setup-button" onClick={() => setEditing(true)}>Edit setup</button>
+    </details>
+  );
+}
+
+// Every context change — manual edits in the form above, or applying a
+// feedback-drafted suggestion (StepFeedback's "Apply to context") — gets
+// logged server-side (routes/agents.js's PATCH handler) rather than just
+// silently overwriting agent.context, so you can see how an agent's memory
+// actually evolved and why, not just its current snapshot.
+function ContextHistory({ history }) {
+  if (!history || history.length === 0) return null;
+  return (
+    <details className="context-history">
+      <summary>Context history ({history.length})</summary>
+      <div className="context-history-list">
+        {[...history].reverse().map((entry, index) => (
+          <div className="context-history-entry" key={index}>
+            <div className="context-history-meta">
+              <span>{formatDate(entry.timestamp)}</span>
+              <span className={`context-history-source ${entry.source}`}>{entry.source === "feedback" ? "From feedback" : "Manual edit"}</span>
+            </div>
+            {entry.feedback && <p className="context-history-feedback">"{entry.feedback}"</p>}
+            <p className="context-history-value">{entry.newContext || "(cleared)"}</p>
+          </div>
+        ))}
+      </div>
     </details>
   );
 }
@@ -922,7 +949,7 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
 
   async function apply() {
     setApplying(true);
-    const ok = await onApply(agent.id, suggestion);
+    const ok = await onApply(agent.id, suggestion, feedback);
     setApplying(false);
     if (ok) reset();
   }
@@ -957,6 +984,29 @@ function StepFeedback({ agent, step, taskInput, onSuggest, onApply }) {
   );
 }
 
+// Every successful "Iterate with more details" call is logged server-side
+// (routes/tasks.js, step.iterations) — this just lists what was asked for and
+// when, newest first. previousOutput is null when that iteration replaced an
+// image (the backend deliberately doesn't duplicate base64 image data into
+// history), shown here as a placeholder instead of the raw output text.
+function StepIterationHistory({ iterations }) {
+  if (!iterations || iterations.length === 0) return null;
+  return (
+    <details className="step-history">
+      <summary>Iteration history ({iterations.length})</summary>
+      <div className="step-history-list">
+        {[...iterations].reverse().map((entry, index) => (
+          <div className="step-history-entry" key={index}>
+            <span className="step-history-date">{formatDate(entry.timestamp)}</span>
+            <p className="step-history-detail">"{entry.details}"</p>
+            <p className="step-history-previous">{entry.previousOutput ? `Was: ${entry.previousOutput}` : "Was: (an image)"}</p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onIterate, onDelete }) {
   const status = task.status || "pending";
   const executionModeLabel = task.executionMode === "thorough" ? "Thorough" : task.executionMode === "fast" ? "Fast" : null;
@@ -984,6 +1034,7 @@ function TaskCard({ task, agents, onSuggestFeedback, onApplyContext, onIterate, 
               <details className={`task-step ${step.status}`} key={step.agentId} open={task.steps.length === 1 || step.status === "error"}>
                 <summary><span>{agent?.name || step.agentId}</span><span>{step.status === "working" && step.phase ? step.phase : step.status}</span></summary>
                 <StepOutput output={step.output} />
+                <StepIterationHistory iterations={step.iterations} />
                 {step.status === "done" && (
                   <div className="step-actions">
                     <StepIterate agent={agent} step={step} taskId={task.id} onIterate={onIterate} />
@@ -1299,9 +1350,9 @@ export default function App() {
     }
   }
 
-  async function applyAgentContext(id, context) {
+  async function applyAgentContext(id, context, feedback) {
     try {
-      const updated = await api.updateAgentContext(id, context);
+      const updated = await api.updateAgentContext(id, context, feedback);
       setAgents((current) => current.map((agent) => agent.id === id ? updated : agent));
       notify(`${updated.name}'s context was updated.`);
       return true;

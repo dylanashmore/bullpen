@@ -22,6 +22,7 @@ export class Agent {
     style = null,
     inspiredBy = null,
     context = null,
+    contextHistory = [],
   }) {
     if (!VALID_OUTPUT_TYPES.has(outputType)) {
       throw new Error(`Invalid outputType "${outputType}". Must be one of: ${[...VALID_OUTPUT_TYPES].join(', ')}`);
@@ -41,6 +42,11 @@ export class Agent {
     this.style = style;
     this.inspiredBy = inspiredBy;
     this.context = context;
+    // Every context change (manual edit or applying a feedback-drafted
+    // suggestion) appends here — { timestamp, previousContext, newContext,
+    // source: 'manual' | 'feedback', feedback? }. Logged in routes/agents.js's
+    // PATCH handler, not here, since only an actual value change should log.
+    this.contextHistory = contextHistory;
   }
 
   buildSystemPrompt() {
@@ -104,6 +110,7 @@ export class Agent {
       style: this.style,
       inspiredBy: this.inspiredBy,
       context: this.context,
+      contextHistory: this.contextHistory,
     };
   }
 }
